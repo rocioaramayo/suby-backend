@@ -1,27 +1,39 @@
 spring:
-  application:
-    name: suby
 
   datasource:
-    url: jdbc:mysql://localhost:3306/suby
-    username: root
-    password: R46742481######
-    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:sqlserver://ROCHI-PC\MSSQLSERVER01:1433;databaseName=suby;encrypt=true;trustServerCertificate=true
+    username: subyuser
+    password: Suby123456
+    driver-class-name: com.microsoft.sqlserver.jdbc.SQLServerDriver
 
   jpa:
+    show-sql: true
+
     hibernate:
       ddl-auto: none
-
-    show-sql: true
+      naming:
+        physical-strategy: org.hibernate.boot.model.naming.PhysicalNamingStrategyStandardImpl
 
     properties:
       hibernate:
-        dialect: org.hibernate.dialect.MySQLDialect
+        dialect: org.hibernate.dialect.SQLServerDialect
         format_sql: true
+
+  mail:
+    host: smtp.gmail.com
+    port: 587
+    username: rocioaramay@gmail.com
+    password: "amei gbzy bxce mmon"
+
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls:
+            enable: true
 
 server:
   port: 8080
-
 
 application:
   security:

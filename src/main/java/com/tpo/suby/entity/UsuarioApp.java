@@ -19,6 +19,7 @@ import java.util.Collections;
 public class UsuarioApp implements UserDetails {
 
     @Id
+    @Column(name = "identificador")
     private Integer identificador;
 
     @OneToOne
@@ -28,29 +29,26 @@ public class UsuarioApp implements UserDetails {
 
     private String email;
 
-    @Column(name = "password_hash")
+    @Column(name = "passwordHash")
     private String passwordHash;
 
-    @Column(name = "token_recuperacion")
+    @Column(name = "tokenRecuperacion")
     private String tokenRecuperacion;
 
-    @Column(name = "token_expira")
+    @Column(name = "tokenExpira")
     private LocalDateTime tokenExpira;
 
-    @Column(name = "estado_app")
+    @Column(name = "estadoApp")
     private String estadoApp;
 
-    @Column(name = "ultimo_login")
+    @Column(name = "ultimoLogin")
     private LocalDateTime ultimoLogin;
 
-    @Column(name = "intentos_fallidos")
+    @Column(name = "intentosFallidos")
     private Integer intentosFallidos;
 
-    @Column(name = "bloqueado_hasta")
+    @Column(name = "bloqueadoHasta")
     private LocalDateTime bloqueadoHasta;
-
-    @Column(name = "primer_login")
-    private Boolean primerLogin;
 
     @Override
     public Collection<? extends GrantedAuthority> getAuthorities() {
@@ -74,7 +72,7 @@ public class UsuarioApp implements UserDetails {
 
     @Override
     public boolean isAccountNonLocked() {
-        return bloqueadoHasta == null || bloqueadoHasta.isBefore(LocalDateTime.now());
+        return !"bloqueado".equalsIgnoreCase(estadoApp);
     }
 
     @Override
@@ -84,11 +82,6 @@ public class UsuarioApp implements UserDetails {
 
     @Override
     public boolean isEnabled() {
-        if (estadoApp == null || estadoApp.isBlank()) {
-            return true;
-        }
-
-        String normalizedEstado = estadoApp.trim().toUpperCase();
-        return !normalizedEstado.equals("INACTIVO") && !normalizedEstado.equals("BLOQUEADO");
+        return !"inactivo".equalsIgnoreCase(estadoApp);
     }
 }
