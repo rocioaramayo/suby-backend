@@ -6,6 +6,8 @@ import org.springframework.security.authentication.AuthenticationProvider;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
+import org.springframework.security.web.AuthenticationEntryPoint;
+import org.springframework.security.web.access.AccessDeniedHandler;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.web.cors.CorsConfigurationSource;
@@ -29,6 +31,10 @@ public class SecurityConfig {
             .cors(cors -> cors.configurationSource(corsConfigurationSource)) 
             .csrf(AbstractHttpConfigurer::disable)
             .sessionManagement(sm -> sm.sessionCreationPolicy(STATELESS))
+            .exceptionHandling(ex -> ex
+                .authenticationEntryPoint(authenticationEntryPoint())
+                .accessDeniedHandler(accessDeniedHandler())
+            )
 
             // 2. Reglas de acceso
             .authorizeHttpRequests(auth -> auth
@@ -41,6 +47,7 @@ public class SecurityConfig {
                 .requestMatchers("/entregas/metodos/**").permitAll()
                 .requestMatchers("/entregas/puntos/**").permitAll()
                 .requestMatchers("/descuentos/validar").permitAll()
+                .requestMatchers("/api/v1/users/*/password").authenticated()
             
                 // Resto de rutas: autenticado
                 .anyRequest().authenticated()
@@ -51,5 +58,23 @@ public class SecurityConfig {
             .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
 
         return http.build();
+    }
+
+    @Bean
+    public AuthenticationEntryPoint authenticationEntryPoint() {
+        return (request, response, authException) -> {
+            response.setStatus(401);
+            response.setContentType("application/json");
+            response.getWriter().write("{\"status\":\"failed\",\"message\":\"El enlace de configuracion de contrasena ha expirado o es invalido.\"}");
+        };
+    }
+
+    @Bean
+    public AccessDeniedHandler accessDeniedHandler() {
+        return (request, response, accessDeniedException) -> {
+            response.setStatus(403);
+            response.setContentType("application/json");
+            response.getWriter().write("{\"status\":\"failed\",\"message\":\"No autorizado.\"}");
+        };
     }
 }
