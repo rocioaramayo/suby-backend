@@ -1,8 +1,12 @@
 package com.tpo.suby.controller;
 
+import com.tpo.suby.dto.request.ForgotPasswordRequest;
 import com.tpo.suby.dto.request.LoginRequest;
 import com.tpo.suby.dto.request.OnboardingRequest;
+import com.tpo.suby.dto.request.VerifyCodeRequest;
 import com.tpo.suby.dto.response.ApiResponse;
+import com.tpo.suby.exception.CodeExpiredException;
+import com.tpo.suby.exception.NotFoundException;
 import com.tpo.suby.service.AuthService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -26,6 +30,54 @@ import java.util.Map;
 public class AuthController {
 
     private final AuthService authService;
+
+    @PostMapping("/password/forgot")
+    public ResponseEntity<?> forgotPassword(
+            @Valid @RequestBody ForgotPasswordRequest request
+    ) {
+        return ResponseEntity.ok(
+                authService.forgotPassword(request)
+        );
+    }
+
+    @PostMapping("/password/verify-code")
+    public ResponseEntity<?> verifyCode(
+            @Valid @RequestBody VerifyCodeRequest request
+    ) {
+        return ResponseEntity.ok(
+                authService.verifyCode(request)
+        );
+    }
+
+    @ExceptionHandler(BadCredentialsException.class)
+    public ResponseEntity<?> handleBadCredentials(BadCredentialsException ex) {
+        return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(
+                Map.of(
+                        "status", "failed",
+                        "message", "El código ingresado es incorrecto. Por favor, verifica e inténtalo nuevamente."
+                )
+        );
+    }
+
+    @ExceptionHandler(NotFoundException.class)
+    public ResponseEntity<?> handleNotFound(NotFoundException ex) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(
+                Map.of(
+                        "status", "failed",
+                        "message", ex.getMessage()
+                )
+        );
+    }
+
+    @ExceptionHandler(CodeExpiredException.class)
+    public ResponseEntity<?> handleCodeExpired(CodeExpiredException ex) {
+        return ResponseEntity.status(HttpStatus.GONE).body(
+                Map.of(
+                        "status", "failed",
+                        "message", "El código de verificación ha expirado. Por favor, solicita uno nuevo."
+                )
+        );
+    }
 
     @PostMapping("/login")
     public ResponseEntity<?> login(
@@ -108,6 +160,20 @@ public class AuthController {
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<?> handleValidation(MethodArgumentNotValidException ex) {
+        boolean forgotPasswordEmailInvalid = ex.getParameter() != null
+                && ex.getParameter().getParameterType() == ForgotPasswordRequest.class
+                && ex.getBindingResult().getFieldErrors().stream()
+                .anyMatch(fieldError -> "email".equals(fieldError.getField()));
+
+        if (forgotPasswordEmailInvalid) {
+            return ResponseEntity.badRequest().body(
+                    Map.of(
+                            "status", "failed",
+                            "message", "Error de validación: Debes proporcionar un formato de correo electrónico válido."
+                    )
+            );
+        }
+
         boolean hasBlankField = ex.getBindingResult().getFieldErrors().stream()
                 .map(FieldError::getCode)
                 .filter(code -> code != null)

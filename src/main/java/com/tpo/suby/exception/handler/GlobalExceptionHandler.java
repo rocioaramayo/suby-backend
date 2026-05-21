@@ -1,9 +1,11 @@
 package com.tpo.suby.exception.handler;
 
 import com.tpo.suby.exception.NotFoundException;
+import com.tpo.suby.exception.CodeExpiredException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.InsufficientAuthenticationException;
 import org.springframework.security.core.AuthenticationException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -19,7 +21,17 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.NOT_FOUND).body(
                 Map.of(
                         "status", "failed",
-                        "message", ex.getMessage()
+                        "message", "No se encontró una solicitud de recuperación de contraseña para este correo."
+                )
+        );
+    }
+
+    @ExceptionHandler(CodeExpiredException.class)
+    public ResponseEntity<?> handleCodeExpired(CodeExpiredException ex) {
+        return ResponseEntity.status(HttpStatus.GONE).body(
+                Map.of(
+                        "status", "failed",
+                        "message", "El código de verificación ha expirado. Por favor, solicita uno nuevo."
                 )
         );
     }
@@ -30,6 +42,16 @@ public class GlobalExceptionHandler {
                 Map.of(
                         "status", "failed",
                         "message", "No autorizado."
+                )
+        );
+    }
+
+    @ExceptionHandler(BadCredentialsException.class)
+    public ResponseEntity<?> handleBadCredentials(BadCredentialsException ex) {
+        return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(
+                Map.of(
+                        "status", "failed",
+                        "message", "El código ingresado es incorrecto. Por favor, verifica e inténtalo nuevamente."
                 )
         );
     }
@@ -46,6 +68,15 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(RuntimeException.class)
     public ResponseEntity<?> handleRuntime(RuntimeException ex) {
+        if ("Ocurrió un problema al intentar enviar el correo. Por favor, inténtalo más tarde.".equals(ex.getMessage())) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(
+                    Map.of(
+                            "status", "failed",
+                            "message", ex.getMessage()
+                    )
+            );
+        }
+
         return ResponseEntity.badRequest().body(
                 Map.of(
                         "status", "failed",

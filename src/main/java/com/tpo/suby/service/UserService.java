@@ -64,6 +64,8 @@ public class UserService {
         usuario.setUltimoLogin(LocalDateTime.now());
         usuario.setIntentosFallidos(0);
         usuario.setBloqueadoHasta(null);
+                usuario.setTokenRecuperacion(null);
+                usuario.setTokenExpira(null);
 
         usuarioAppRepository.save(usuario);
     }

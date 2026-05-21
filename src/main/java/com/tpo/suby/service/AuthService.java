@@ -1,12 +1,16 @@
 package com.tpo.suby.service;
 
+import com.tpo.suby.dto.request.ForgotPasswordRequest;
 import com.tpo.suby.dto.request.LoginRequest;
 import com.tpo.suby.dto.request.OnboardingRequest;
+import com.tpo.suby.dto.request.VerifyCodeRequest;
 import com.tpo.suby.dto.response.ApiResponse;
 import com.tpo.suby.config.JwtService;
 import com.tpo.suby.entity.OnboardingUsuario;
 import com.tpo.suby.entity.Persona;
 import com.tpo.suby.entity.UsuarioApp;
+import com.tpo.suby.exception.CodeExpiredException;
+import com.tpo.suby.exception.NotFoundException;
 import com.tpo.suby.repository.OnboardingUsuarioRepository;
 import com.tpo.suby.repository.PersonaRepository;
 import com.tpo.suby.repository.UsuarioAppRepository;
@@ -24,6 +28,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.io.IOException;
 import java.time.LocalDateTime;
+import java.util.Random;
 import java.util.List;
 import java.util.HashMap;
 import java.util.Map;
@@ -42,6 +47,76 @@ public class AuthService {
     private final JavaMailSender mailSender;
 
     private final JwtService jwtService;
+
+        public Map<String, Object> forgotPassword(ForgotPasswordRequest request) {
+        UsuarioApp usuario = usuarioRepository
+            .findByEmail(request.getEmail())
+            .orElseThrow(() -> new NotFoundException(
+                "No existe ninguna cuenta asociada a este correo electrónico."
+            ));
+
+        String code = String.format("%06d", new Random().nextInt(1_000_000));
+
+        usuario.setTokenRecuperacion(code);
+        usuario.setTokenExpira(LocalDateTime.now().plusMinutes(15));
+        usuarioRepository.save(usuario);
+
+        SimpleMailMessage message = new SimpleMailMessage();
+        message.setFrom("rocioaramay@gmail.com");
+        message.setTo(usuario.getEmail());
+        message.setSubject("Código de recuperación - Suby");
+        message.setText("""
+    Tu código de recuperación es:
+
+    %s
+
+    El código vence en 15 minutos.
+    """.formatted(code));
+
+        try {
+            mailSender.send(message);
+        } catch (Exception e) {
+            throw new RuntimeException(
+                    "Ocurrió un problema al intentar enviar el correo. Por favor, inténtalo más tarde."
+            );
+        }
+
+        return Map.of(
+            "status", "success",
+            "message", "Hemos enviado un código de 6 dígitos para recuperar tu cuenta."
+        );
+        }
+
+        public Map<String, Object> verifyCode(VerifyCodeRequest request) {
+        UsuarioApp usuario = usuarioRepository
+            .findByEmail(request.getEmail())
+            .orElseThrow(() -> new NotFoundException(
+                "No se encontró una solicitud de recuperación de contraseña para este correo."
+            ));
+
+            if (usuario.getTokenRecuperacion() == null || usuario.getTokenExpira() == null) {
+                throw new NotFoundException(
+                    "No se encontró una solicitud de recuperación de contraseña para este correo."
+                );
+            }
+
+        if (usuario.getTokenExpira() == null || usuario.getTokenExpira().isBefore(LocalDateTime.now())) {
+            throw new CodeExpiredException("El código de verificación ha expirado.");
+        }
+
+        if (usuario.getTokenRecuperacion() == null || !usuario.getTokenRecuperacion().equals(request.getCode())) {
+            throw new org.springframework.security.authentication.BadCredentialsException(
+                "El código ingresado es incorrecto."
+            );
+        }
+
+        return Map.of(
+            "status", "success",
+            "message", Map.of(
+                "text", "El código ha sido verificado correctamente."
+            )
+        );
+        }
 
     public ApiResponse<Map<String, Object>> login(LoginRequest request) {
 
