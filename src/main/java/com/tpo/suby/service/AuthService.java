@@ -8,11 +8,14 @@ import com.tpo.suby.dto.response.ApiResponse;
 import com.tpo.suby.config.JwtService;
 import com.tpo.suby.entity.OnboardingUsuario;
 import com.tpo.suby.entity.Persona;
+import com.tpo.suby.entity.RevokedToken;
 import com.tpo.suby.entity.UsuarioApp;
 import com.tpo.suby.exception.CodeExpiredException;
+import com.tpo.suby.exception.InvalidTokenException;
 import com.tpo.suby.exception.NotFoundException;
 import com.tpo.suby.repository.OnboardingUsuarioRepository;
 import com.tpo.suby.repository.PersonaRepository;
+import com.tpo.suby.repository.RevokedTokenRepository;
 import com.tpo.suby.repository.UsuarioAppRepository;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.BadCredentialsException;
@@ -42,11 +45,44 @@ public class AuthService {
     private final UsuarioAppRepository usuarioRepository;
     private final OnboardingUsuarioRepository onboardingUsuarioRepository;
     private final PersonaRepository personaRepository;
+    private final RevokedTokenRepository revokedTokenRepository;
     private final AuthenticationManager authenticationManager;
     private final PasswordEncoder passwordEncoder;
     private final JavaMailSender mailSender;
 
     private final JwtService jwtService;
+
+    public Map<String, Object> logout(String token) {
+        if (token == null || token.isBlank()) {
+            throw new InvalidTokenException("Token inválido o expirado.");
+        }
+
+        try {
+            if (jwtService.extractExpiration(token).before(new java.util.Date())) {
+                throw new InvalidTokenException("Token inválido o expirado.");
+            }
+        } catch (Exception e) {
+            throw new InvalidTokenException("Token inválido o expirado.");
+        }
+
+        String tokenHash = jwtService.hashToken(token);
+        if (!revokedTokenRepository.existsByTokenHash(tokenHash)) {
+            RevokedToken revokedToken = RevokedToken.builder()
+                    .tokenHash(tokenHash)
+                    .expiresAt(LocalDateTime.ofInstant(
+                            jwtService.extractExpiration(token).toInstant(),
+                            java.time.ZoneId.systemDefault()
+                    ))
+                    .build();
+
+            revokedTokenRepository.save(revokedToken);
+        }
+
+        return Map.of(
+                "status", "success",
+                "message", "Sesión cerrada exitosamente."
+        );
+    }
 
         public Map<String, Object> forgotPassword(ForgotPasswordRequest request) {
         UsuarioApp usuario = usuarioRepository

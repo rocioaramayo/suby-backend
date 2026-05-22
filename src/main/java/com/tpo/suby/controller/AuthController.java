@@ -4,8 +4,8 @@ import com.tpo.suby.dto.request.ForgotPasswordRequest;
 import com.tpo.suby.dto.request.LoginRequest;
 import com.tpo.suby.dto.request.OnboardingRequest;
 import com.tpo.suby.dto.request.VerifyCodeRequest;
-import com.tpo.suby.dto.response.ApiResponse;
 import com.tpo.suby.exception.CodeExpiredException;
+import com.tpo.suby.exception.InvalidTokenException;
 import com.tpo.suby.exception.NotFoundException;
 import com.tpo.suby.service.AuthService;
 import jakarta.validation.Valid;
@@ -16,12 +16,12 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.LockedException;
 import org.springframework.validation.FieldError;
-import org.springframework.validation.ObjectError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.multipart.MultipartException;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.List;
+import jakarta.servlet.http.HttpServletRequest;
+
 import java.util.Map;
 
 @RestController
@@ -47,6 +47,16 @@ public class AuthController {
         return ResponseEntity.ok(
                 authService.verifyCode(request)
         );
+    }
+
+    @PostMapping("/logout")
+    public ResponseEntity<?> logout(HttpServletRequest request) {
+        String authHeader = request.getHeader("Authorization");
+        String token = authHeader != null && authHeader.startsWith("Bearer ")
+                ? authHeader.substring(7)
+                : null;
+
+        return ResponseEntity.ok(authService.logout(token));
     }
 
     @ExceptionHandler(BadCredentialsException.class)
@@ -75,6 +85,16 @@ public class AuthController {
                 Map.of(
                         "status", "failed",
                         "message", "El código de verificación ha expirado. Por favor, solicita uno nuevo."
+                )
+        );
+    }
+
+    @ExceptionHandler(InvalidTokenException.class)
+    public ResponseEntity<?> handleInvalidToken(InvalidTokenException ex) {
+        return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(
+                Map.of(
+                        "status", "failed",
+                        "message", "Token inválido o expirado."
                 )
         );
     }
