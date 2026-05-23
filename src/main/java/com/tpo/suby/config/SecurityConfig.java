@@ -67,7 +67,11 @@ public class SecurityConfig {
         return (request, response, authException) -> {
             response.setStatus(401);
             response.setContentType("application/json");
-            response.getWriter().write("{\"status\":\"failed\",\"message\":\"El enlace de configuracion de contrasena ha expirado o es invalido.\"}");
+            if (request.getRequestURI().contains("/payment-methods")) {
+                response.getWriter().write("{\"status\":\"failed\",\"message\":\"No autorizado.\"}");
+            } else {
+                response.getWriter().write("{\"status\":\"failed\",\"message\":\"El enlace de configuracion de contrasena ha expirado o es invalido.\"}");
+            }
         };
     }
 

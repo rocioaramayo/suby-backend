@@ -22,6 +22,8 @@ import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.LockedException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import lombok.RequiredArgsConstructor;
+import org.springframework.dao.EmptyResultDataAccessException;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.mail.SimpleMailMessage;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -49,6 +51,7 @@ public class AuthService {
     private final AuthenticationManager authenticationManager;
     private final PasswordEncoder passwordEncoder;
     private final JavaMailSender mailSender;
+    private final JdbcTemplate jdbcTemplate;
 
     private final JwtService jwtService;
 
@@ -336,6 +339,7 @@ Equipo Suby
                 .build();
 
             usuarioRepository.save(usuario);
+            createClientProfile(persona.getIdentificador());
 
             // Mark onboarding as processed before sending email to avoid duplicates
             onboarding.setEstado("procesado");
@@ -372,5 +376,38 @@ Equipo Suby
                 System.err.println("Failed to send approval email to " + onboarding.getEmail() + ": " + e.getMessage());
             }
         }
+    }
+
+    private void createClientProfile(Integer personId) {
+        if (clientExists(personId)) {
+            return;
         }
+
+        jdbcTemplate.update("""
+                INSERT INTO clientes (
+                    identificador, numeroPais, admitido, categoria, verificador
+                )
+                VALUES (?, NULL, ?, ?, ?)
+                """, personId, "si", "comun", firstEmployeeId());
+    }
+
+    private boolean clientExists(Integer personId) {
+        Integer count = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM clientes WHERE identificador = ?",
+                Integer.class,
+                personId
+        );
+        return count != null && count > 0;
+    }
+
+    private Integer firstEmployeeId() {
+        try {
+            return jdbcTemplate.queryForObject(
+                    "SELECT TOP 1 identificador FROM empleados ORDER BY identificador ASC",
+                    Integer.class
+            );
+        } catch (EmptyResultDataAccessException ex) {
+            throw new IllegalStateException("No existe un empleado verificador para crear el cliente.");
+        }
+    }
 }

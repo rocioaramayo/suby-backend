@@ -42,7 +42,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
         jwt = authHeader.substring(7);
         if (revokedTokenRepository.existsByTokenHash(jwtService.hashToken(jwt))) {
-            reject(response);
+            reject(request, response);
             return;
         }
 
@@ -59,12 +59,12 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                       new WebAuthenticationDetailsSource().buildDetails(request));
               SecurityContextHolder.getContext().setAuthentication(authToken);
                 } else {
-                    reject(response);
+                    reject(request, response);
                     return;
                 }
             }
         } catch (Exception e) {
-            reject(response);
+            reject(request, response);
             return;
         }
 
@@ -72,10 +72,14 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     }
 
-    private void reject(HttpServletResponse response) throws IOException {
+    private void reject(HttpServletRequest request, HttpServletResponse response) throws IOException {
         response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
         response.setContentType("application/json");
         response.setCharacterEncoding(StandardCharsets.UTF_8.name());
-        response.getWriter().write("{\"status\":\"failed\",\"message\":\"Token inválido o expirado.\"}");
+        if (request.getRequestURI().contains("/payment-methods")) {
+            response.getWriter().write("{\"status\":\"failed\",\"message\":\"No autorizado.\"}");
+        } else {
+            response.getWriter().write("{\"status\":\"failed\",\"message\":\"Token inválido o expirado.\"}");
+        }
     }
 }
