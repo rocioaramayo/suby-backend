@@ -1,9 +1,9 @@
 spring:
 
   datasource:
-    url: jdbc:sqlserver://ROCHI-PC\MSSQLSERVER01:1433;databaseName=suby;encrypt=true;trustServerCertificate=true
-    username: subyuser
-    password: Suby123456
+    url: jdbc:sqlserver://localhost:1433;databaseName=suby;encrypt=false;trustServerCertificate=true
+    username: sa
+    password: Tbattot-jyZci6
     driver-class-name: com.microsoft.sqlserver.jdbc.SQLServerDriver
 
   jpa:
