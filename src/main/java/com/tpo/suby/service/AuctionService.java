@@ -6,8 +6,11 @@ import com.tpo.suby.dto.response.auction.AuctionDetailResponse;
 import com.tpo.suby.dto.response.auction.AuctionListItemResponse;
 import com.tpo.suby.dto.response.auction.AuctionListResponse;
 import com.tpo.suby.dto.response.auction.AuctioneerResponse;
+import com.tpo.suby.dto.response.auction.LotAuctionResponse;
+import com.tpo.suby.dto.response.auction.LotDetailResponse;
 import com.tpo.suby.exception.AuctionAccessDeniedException;
 import com.tpo.suby.exception.InvalidQueryParameterException;
+import com.tpo.suby.exception.LotNotFoundException;
 import com.tpo.suby.exception.NotFoundException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.EmptyResultDataAccessException;
@@ -231,6 +234,79 @@ public class AuctionService {
                         .items(items)
                         .build())
                 .build();
+    }
+
+    public LotDetailResponse getLotDetail(Integer auctionId, Integer itemId) {
+        if (auctionId == null || auctionId <= 0 || itemId == null || itemId <= 0) {
+            throw new LotNotFoundException("Lote no encontrado.");
+        }
+
+        try {
+            return jdbcTemplate.queryForObject("""
+                    SELECT
+                        ic.identificador AS item_id,
+                        CONCAT('LOT-', RIGHT(CONCAT('000', ic.identificador), 3)) AS lot_code,
+                        p.descripcionCatalogo AS title,
+                        s.categoria AS category,
+                        CAST(NULL AS VARCHAR(250)) AS artist,
+                        CAST(NULL AS VARCHAR(100)) AS period,
+                        p.descripcionCompleta AS description,
+                        CAST(NULL AS VARCHAR(500)) AS conservation_state,
+                        CAST(NULL AS VARCHAR(500)) AS provenance,
+                        ic.precioBase AS base_price,
+                        COALESCE(offers.current_offer, ic.precioBase) AS current_offer,
+                        COALESCE(ic.subastado, 'no') AS auctioned,
+                        owner.nombre AS owner,
+                        c.descripcion AS catalog_description,
+                        p.seguro AS insurance_policy,
+                        s.identificador AS auction_id,
+                        COALESCE(c.descripcion, CONCAT('Subasta ', s.identificador)) AS auction_name,
+                        s.fecha AS auction_date,
+                        auctioneer_person.nombre AS auctioneer,
+                        s.ubicacion AS auction_location
+                    FROM subastas s
+                    JOIN catalogos c ON c.subasta = s.identificador
+                    JOIN itemsCatalogo ic ON ic.catalogo = c.identificador
+                    JOIN productos p ON p.identificador = ic.producto
+                    LEFT JOIN duenios d ON d.identificador = p.duenio
+                    LEFT JOIN personas owner ON owner.identificador = d.identificador
+                    LEFT JOIN subastadores sub ON sub.identificador = s.subastador
+                    LEFT JOIN personas auctioneer_person ON auctioneer_person.identificador = sub.identificador
+                    OUTER APPLY (
+                        SELECT MAX(pu.importe) AS current_offer
+                        FROM pujos pu
+                        WHERE pu.item = ic.identificador
+                    ) offers
+                    WHERE s.identificador = ?
+                      AND ic.identificador = ?
+                    """, (rs, rowNum) -> LotDetailResponse.builder()
+                    .itemId(rs.getInt("item_id"))
+                    .lotCode(rs.getString("lot_code"))
+                    .title(rs.getString("title"))
+                    .category(rs.getString("category"))
+                    .artist(rs.getString("artist"))
+                    .period(rs.getString("period"))
+                    .description(rs.getString("description"))
+                    .conservationState(rs.getString("conservation_state"))
+                    .provenance(rs.getString("provenance"))
+                    .basePrice(rs.getBigDecimal("base_price"))
+                    .currentOffer(rs.getBigDecimal("current_offer"))
+                    .auctioned(rs.getString("auctioned"))
+                    .owner(rs.getString("owner"))
+                    .photos(List.of())
+                    .catalogDescription(rs.getString("catalog_description"))
+                    .insurancePolicy(rs.getString("insurance_policy"))
+                    .auction(LotAuctionResponse.builder()
+                            .id(rs.getInt("auction_id"))
+                            .name(rs.getString("auction_name"))
+                            .date(toLocalDate(rs.getDate("auction_date")))
+                            .auctioneer(rs.getString("auctioneer"))
+                            .location(rs.getString("auction_location"))
+                            .build())
+                    .build(), auctionId, itemId);
+        } catch (EmptyResultDataAccessException ex) {
+            throw new LotNotFoundException("Lote no encontrado.");
+        }
     }
 
     private String buildWhere(String category, String status, String search, List<Object> params) {

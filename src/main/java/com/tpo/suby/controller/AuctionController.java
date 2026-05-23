@@ -3,8 +3,10 @@ package com.tpo.suby.controller;
 import com.tpo.suby.dto.response.ApiResponse;
 import com.tpo.suby.dto.response.auction.AuctionDetailResponse;
 import com.tpo.suby.dto.response.auction.AuctionListResponse;
+import com.tpo.suby.dto.response.auction.LotDetailResponse;
 import com.tpo.suby.exception.AuctionAccessDeniedException;
 import com.tpo.suby.exception.InvalidQueryParameterException;
+import com.tpo.suby.exception.LotNotFoundException;
 import com.tpo.suby.exception.NotFoundException;
 import com.tpo.suby.service.AuctionService;
 import lombok.RequiredArgsConstructor;
@@ -54,6 +56,20 @@ public class AuctionController {
         );
     }
 
+    @GetMapping("/{auctionId}/items/{itemId}")
+    public ResponseEntity<?> getLotDetail(
+            @PathVariable Integer auctionId,
+            @PathVariable Integer itemId
+    ) {
+        LotDetailResponse lot = auctionService.getLotDetail(auctionId, itemId);
+        return ResponseEntity.ok(
+                ApiResponse.<LotDetailResponse>builder()
+                        .status("success")
+                        .message(lot)
+                        .build()
+        );
+    }
+
     @ExceptionHandler(InvalidQueryParameterException.class)
     public ResponseEntity<?> handleInvalidQueryParameter(InvalidQueryParameterException ex) {
         return ResponseEntity.badRequest().body(
@@ -80,6 +96,16 @@ public class AuctionController {
                 Map.of(
                         "status", "failed",
                         "message", "Subasta no encontrada."
+                )
+        );
+    }
+
+    @ExceptionHandler(LotNotFoundException.class)
+    public ResponseEntity<?> handleLotNotFound(LotNotFoundException ex) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(
+                Map.of(
+                        "status", "failed",
+                        "message", "Lote no encontrado."
                 )
         );
     }
