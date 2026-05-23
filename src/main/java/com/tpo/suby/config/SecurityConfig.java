@@ -42,6 +42,7 @@ public class SecurityConfig {
                 // Público: auth, errores, catálogo y reviews (GET)
                 .requestMatchers("/api/v1/auth/**", "/error/**").permitAll()
                 .requestMatchers("/api/v1/home").permitAll()
+                .requestMatchers("/api/v1/auctions/**").permitAll()
                 .requestMatchers("/productos/**").permitAll()
                 .requestMatchers("/categories/**").permitAll()
                 .requestMatchers("/reviews/**").permitAll()
