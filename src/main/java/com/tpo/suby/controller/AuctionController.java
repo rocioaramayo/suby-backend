@@ -4,17 +4,24 @@ import com.tpo.suby.dto.response.ApiResponse;
 import com.tpo.suby.dto.response.auction.AuctionDetailResponse;
 import com.tpo.suby.dto.response.auction.AuctionListResponse;
 import com.tpo.suby.dto.response.auction.LotDetailResponse;
+import com.tpo.suby.dto.response.bid.AttendeeRegistrationResponse;
+import com.tpo.suby.exception.AttendeeAlreadyRegisteredException;
 import com.tpo.suby.exception.AuctionAccessDeniedException;
+import com.tpo.suby.exception.AuctionRoomAccessException;
 import com.tpo.suby.exception.InvalidQueryParameterException;
 import com.tpo.suby.exception.LotNotFoundException;
+import com.tpo.suby.exception.MissingPaymentMethodException;
 import com.tpo.suby.exception.NotFoundException;
+import com.tpo.suby.exception.UnauthorizedException;
 import com.tpo.suby.service.AuctionService;
+import com.tpo.suby.service.BidRoomService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -27,6 +34,7 @@ import java.util.Map;
 public class AuctionController {
 
     private final AuctionService auctionService;
+    private final BidRoomService bidRoomService;
 
     @GetMapping
     public ResponseEntity<?> listAuctions(
@@ -70,6 +78,17 @@ public class AuctionController {
         );
     }
 
+    @PostMapping("/{auctionId}/attendees")
+    public ResponseEntity<?> registerAttendee(@PathVariable Integer auctionId) {
+        AttendeeRegistrationResponse attendee = bidRoomService.registerAttendee(auctionId);
+        return ResponseEntity.status(HttpStatus.CREATED).body(
+                ApiResponse.<AttendeeRegistrationResponse>builder()
+                        .status("success")
+                        .message(attendee)
+                        .build()
+        );
+    }
+
     @ExceptionHandler(InvalidQueryParameterException.class)
     public ResponseEntity<?> handleInvalidQueryParameter(InvalidQueryParameterException ex) {
         return ResponseEntity.badRequest().body(
@@ -106,6 +125,46 @@ public class AuctionController {
                 Map.of(
                         "status", "failed",
                         "message", "Lote no encontrado."
+                )
+        );
+    }
+
+    @ExceptionHandler(UnauthorizedException.class)
+    public ResponseEntity<?> handleUnauthorized(UnauthorizedException ex) {
+        return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(
+                Map.of(
+                        "status", "failed",
+                        "message", "Debes iniciar sesión para ingresar a la sala de puja."
+                )
+        );
+    }
+
+    @ExceptionHandler(AuctionRoomAccessException.class)
+    public ResponseEntity<?> handleAuctionRoomAccess(AuctionRoomAccessException ex) {
+        return ResponseEntity.status(HttpStatus.FORBIDDEN).body(
+                Map.of(
+                        "status", "failed",
+                        "message", "No tienes acceso a esta subasta. Verificá tu categoría o estado de cuenta."
+                )
+        );
+    }
+
+    @ExceptionHandler(AttendeeAlreadyRegisteredException.class)
+    public ResponseEntity<?> handleAttendeeAlreadyRegistered(AttendeeAlreadyRegisteredException ex) {
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(
+                Map.of(
+                        "status", "failed",
+                        "message", "Ya estás registrado en esta subasta."
+                )
+        );
+    }
+
+    @ExceptionHandler(MissingPaymentMethodException.class)
+    public ResponseEntity<?> handleMissingPaymentMethod(MissingPaymentMethodException ex) {
+        return ResponseEntity.unprocessableEntity().body(
+                Map.of(
+                        "status", "failed",
+                        "message", "Necesitás registrar al menos un medio de pago para pujar."
                 )
         );
     }

@@ -76,7 +76,9 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
         response.setContentType("application/json");
         response.setCharacterEncoding(StandardCharsets.UTF_8.name());
-        if (request.getRequestURI().contains("/payment-methods")) {
+        if (request.getRequestURI().contains("/attendees")) {
+            response.getWriter().write("{\"status\":\"failed\",\"message\":\"Debes iniciar sesión para ingresar a la sala de puja.\"}");
+        } else if (request.getRequestURI().contains("/payment-methods")) {
             response.getWriter().write("{\"status\":\"failed\",\"message\":\"No autorizado.\"}");
         } else {
             response.getWriter().write("{\"status\":\"failed\",\"message\":\"Token inválido o expirado.\"}");
