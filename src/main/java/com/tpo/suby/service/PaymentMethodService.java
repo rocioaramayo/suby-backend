@@ -213,7 +213,7 @@ public class PaymentMethodService {
         }
 
         Integer employeeId = firstEmployeeId();
-        Integer auctionId = firstAuctionId();
+        Integer auctionId = null;
         Integer paymentMethodId = insertPaymentMethod(
                 userId,
                 "cheque_certificado",

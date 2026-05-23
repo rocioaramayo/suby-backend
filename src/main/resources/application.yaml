@@ -2,8 +2,8 @@ spring:
 
   datasource:
     url: jdbc:sqlserver://localhost:1433;databaseName=suby;encrypt=false;trustServerCertificate=true
-    username: sa
-    password: Tbattot-jyZci6
+    username: subyuser
+    password: Suby123456
     driver-class-name: com.microsoft.sqlserver.jdbc.SQLServerDriver
 
   jpa:
