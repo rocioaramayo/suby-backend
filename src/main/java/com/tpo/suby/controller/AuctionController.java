@@ -1,14 +1,20 @@
 package com.tpo.suby.controller;
 
+import com.tpo.suby.dto.request.bid.BidRequest;
 import com.tpo.suby.dto.response.ApiResponse;
 import com.tpo.suby.dto.response.auction.AuctionDetailResponse;
 import com.tpo.suby.dto.response.auction.AuctionListResponse;
 import com.tpo.suby.dto.response.auction.LotDetailResponse;
 import com.tpo.suby.dto.response.bid.AttendeeRegistrationResponse;
+import com.tpo.suby.dto.response.bid.BidResponse;
+import com.tpo.suby.exception.AdjudicatedLotException;
 import com.tpo.suby.exception.AttendeeAlreadyRegisteredException;
 import com.tpo.suby.exception.AuctionAccessDeniedException;
 import com.tpo.suby.exception.AuctionRoomAccessException;
+import com.tpo.suby.exception.BidRestrictedException;
+import com.tpo.suby.exception.InsufficientBalanceException;
 import com.tpo.suby.exception.InvalidQueryParameterException;
+import com.tpo.suby.exception.InvalidBidAmountException;
 import com.tpo.suby.exception.LotNotFoundException;
 import com.tpo.suby.exception.MissingPaymentMethodException;
 import com.tpo.suby.exception.NotFoundException;
@@ -22,6 +28,7 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -85,6 +92,21 @@ public class AuctionController {
                 ApiResponse.<AttendeeRegistrationResponse>builder()
                         .status("success")
                         .message(attendee)
+                        .build()
+        );
+    }
+
+    @PostMapping("/{auctionId}/items/{itemId}/bids")
+    public ResponseEntity<?> placeBid(
+            @PathVariable Integer auctionId,
+            @PathVariable Integer itemId,
+            @RequestBody BidRequest request
+    ) {
+        BidResponse bid = bidRoomService.placeBid(auctionId, itemId, request);
+        return ResponseEntity.status(HttpStatus.CREATED).body(
+                ApiResponse.<BidResponse>builder()
+                        .status("success")
+                        .message(bid)
                         .build()
         );
     }
@@ -165,6 +187,46 @@ public class AuctionController {
                 Map.of(
                         "status", "failed",
                         "message", "Necesitás registrar al menos un medio de pago para pujar."
+                )
+        );
+    }
+
+    @ExceptionHandler(InvalidBidAmountException.class)
+    public ResponseEntity<?> handleInvalidBidAmount(InvalidBidAmountException ex) {
+        return ResponseEntity.badRequest().body(
+                Map.of(
+                        "status", "failed",
+                        "message", ex.getMessage()
+                )
+        );
+    }
+
+    @ExceptionHandler(BidRestrictedException.class)
+    public ResponseEntity<?> handleBidRestricted(BidRestrictedException ex) {
+        return ResponseEntity.status(HttpStatus.FORBIDDEN).body(
+                Map.of(
+                        "status", "failed",
+                        "message", "No podés pujar. Tu cuenta tiene restricciones activas."
+                )
+        );
+    }
+
+    @ExceptionHandler(AdjudicatedLotException.class)
+    public ResponseEntity<?> handleAdjudicatedLot(AdjudicatedLotException ex) {
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(
+                Map.of(
+                        "status", "failed",
+                        "message", "Este lote ya fue adjudicado."
+                )
+        );
+    }
+
+    @ExceptionHandler(InsufficientBalanceException.class)
+    public ResponseEntity<?> handleInsufficientBalance(InsufficientBalanceException ex) {
+        return ResponseEntity.unprocessableEntity().body(
+                Map.of(
+                        "status", "failed",
+                        "message", "Saldo insuficiente. Cargá más plata para poder pujar."
                 )
         );
     }
