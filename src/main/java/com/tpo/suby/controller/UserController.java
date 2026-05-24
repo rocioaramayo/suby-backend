@@ -3,6 +3,7 @@ package com.tpo.suby.controller;
 import com.tpo.suby.dto.request.ChangePasswordRequest;
 import com.tpo.suby.dto.response.ApiResponse;
 import com.tpo.suby.dto.response.user.UserProfileResponse;
+import com.tpo.suby.dto.response.user.UserStatsResponse;
 import com.tpo.suby.service.UserService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -53,12 +54,23 @@ public class UserController {
         );
     }
 
+    @GetMapping("/{userId}/stats")
+    public ResponseEntity<?> getStats(@PathVariable Integer userId) {
+        UserStatsResponse stats = userService.getStats(userId);
+        return ResponseEntity.ok(
+                ApiResponse.<UserStatsResponse>builder()
+                        .status("success")
+                        .message(stats)
+                        .build()
+        );
+    }
+
     @ExceptionHandler(InsufficientAuthenticationException.class)
     public ResponseEntity<?> handleUnauthorized(InsufficientAuthenticationException ex) {
         return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(
                 Map.of(
                         "status", "failed",
-                        "message", "No autorizado. Iniciá sesión para ver tu perfil."
+                        "message", ex.getMessage()
                 )
         );
     }
@@ -68,7 +80,7 @@ public class UserController {
         return ResponseEntity.status(HttpStatus.FORBIDDEN).body(
                 Map.of(
                         "status", "failed",
-                        "message", "No tenés permiso para ver el perfil de otro usuario."
+                        "message", ex.getMessage()
                 )
         );
     }
