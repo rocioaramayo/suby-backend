@@ -2,13 +2,16 @@ package com.tpo.suby.service;
 
 import com.tpo.suby.dto.request.bid.BidRequest;
 import com.tpo.suby.dto.response.bid.AttendeeRegistrationResponse;
+import com.tpo.suby.dto.response.bid.BidResultResponse;
 import com.tpo.suby.dto.response.bid.BidResponse;
 import com.tpo.suby.dto.response.bid.LiveBidStatusResponse;
+import com.tpo.suby.dto.response.bid.WinnerResponse;
 import com.tpo.suby.entity.UsuarioApp;
 import com.tpo.suby.exception.AdjudicatedLotException;
 import com.tpo.suby.exception.AttendeeAlreadyRegisteredException;
 import com.tpo.suby.exception.AuctionRoomAccessException;
 import com.tpo.suby.exception.BidRestrictedException;
+import com.tpo.suby.exception.BidResultNotFoundException;
 import com.tpo.suby.exception.InsufficientBalanceException;
 import com.tpo.suby.exception.InvalidBidAmountException;
 import com.tpo.suby.exception.MissingPaymentMethodException;
@@ -35,6 +38,7 @@ import java.sql.PreparedStatement;
 import java.sql.Statement;
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.Locale;
 
 @Service
@@ -190,6 +194,106 @@ public class BidRoomService {
             }, auctionId, itemId);
         } catch (EmptyResultDataAccessException ex) {
             throw new NotFoundException("Lote no encontrado.");
+        }
+    }
+
+    public BidResultResponse bidResult(Integer auctionId, Integer itemId) {
+        if (auctionId == null || auctionId <= 0 || itemId == null || itemId <= 0) {
+            throw new BidResultNotFoundException("Bid result not found.");
+        }
+
+        authenticatedUser();
+
+        try {
+            return jdbcTemplate.queryForObject("""
+                    SELECT
+                        ic.identificador AS item_id,
+                        CONCAT('LOT-', RIGHT(CONCAT('000', ic.identificador), 3)) AS lot_code,
+                        p.descripcionCompleta AS title,
+                        ic.precioBase AS base_price,
+                        ic.comision AS commission,
+                        COALESCE(ic.subastado, 'no') AS auctioned,
+                        winning_bid.importe AS winning_bid,
+                        winner.numeroPostor AS bidder_number,
+                        winner_person.nombre AS winner_name,
+                        COALESCE(stats.total_bids, 0) AS total_bids,
+                        s.identificador AS auction_id,
+                        COALESCE(c.descripcion, CONCAT('Subasta ', s.identificador)) AS auction_name,
+                        auctioneer_person.nombre AS auctioneer,
+                        s.fecha AS auction_date,
+                        s.hora AS auction_time
+                    FROM subastas s
+                    JOIN catalogos c ON c.subasta = s.identificador
+                    JOIN itemsCatalogo ic ON ic.catalogo = c.identificador
+                    JOIN productos p ON p.identificador = ic.producto
+                    OUTER APPLY (
+                        SELECT TOP 1 pu.identificador, pu.importe, pu.asistente
+                        FROM pujos pu
+                        WHERE pu.item = ic.identificador
+                          AND pu.ganador = 'si'
+                        ORDER BY pu.importe DESC, pu.identificador DESC
+                    ) marked_winner
+                    OUTER APPLY (
+                        SELECT TOP 1 pu.identificador, pu.importe, pu.asistente
+                        FROM pujos pu
+                        WHERE pu.item = ic.identificador
+                        ORDER BY pu.importe DESC, pu.identificador DESC
+                    ) highest_bid
+                    OUTER APPLY (
+                        SELECT
+                            COALESCE(marked_winner.identificador, highest_bid.identificador) AS identificador,
+                            COALESCE(marked_winner.importe, highest_bid.importe) AS importe,
+                            COALESCE(marked_winner.asistente, highest_bid.asistente) AS asistente
+                    ) winning_bid
+                    OUTER APPLY (
+                        SELECT COUNT(pu.identificador) AS total_bids
+                        FROM pujos pu
+                        WHERE pu.item = ic.identificador
+                    ) stats
+                    LEFT JOIN asistentes winner ON winner.identificador = winning_bid.asistente
+                    LEFT JOIN personas winner_person ON winner_person.identificador = winner.cliente
+                    LEFT JOIN subastadores sub ON sub.identificador = s.subastador
+                    LEFT JOIN personas auctioneer_person ON auctioneer_person.identificador = sub.identificador
+                    WHERE s.identificador = ?
+                      AND ic.identificador = ?
+                      AND COALESCE(ic.subastado, 'no') = 'si'
+                      AND winning_bid.identificador IS NOT NULL
+                    """, (rs, rowNum) -> {
+                BigDecimal winningBid = rs.getBigDecimal("winning_bid");
+                BigDecimal commissionPercentage = commissionPercentage(
+                        rs.getBigDecimal("commission"),
+                        rs.getBigDecimal("base_price")
+                );
+                BigDecimal commissionAmount = winningBid
+                        .multiply(commissionPercentage)
+                        .divide(new BigDecimal("100"), 2, RoundingMode.HALF_UP);
+
+                LocalDateTime auctionedAt = LocalDateTime.of(
+                        toLocalDate(rs.getDate("auction_date")),
+                        toLocalTime(rs.getTime("auction_time"))
+                ).plusMinutes(AUCTION_DURATION_MINUTES);
+
+                return BidResultResponse.builder()
+                        .itemId(rs.getInt("item_id"))
+                        .lotCode(rs.getString("lot_code"))
+                        .title(rs.getString("title"))
+                        .winningBid(winningBid)
+                        .winner(WinnerResponse.builder()
+                                .bidderNumber(rs.getInt("bidder_number"))
+                                .name(formatBidderName(rs.getString("winner_name")))
+                                .build())
+                        .commissionPercentage(commissionPercentage)
+                        .commissionAmount(commissionAmount)
+                        .totalToPay(winningBid.add(commissionAmount))
+                        .totalBids(rs.getInt("total_bids"))
+                        .auctionId(rs.getInt("auction_id"))
+                        .auctionName(rs.getString("auction_name"))
+                        .auctioneer(rs.getString("auctioneer"))
+                        .auctionedAt(auctionedAt.atZone(ZoneId.systemDefault()).toInstant().toString())
+                        .build();
+            }, auctionId, itemId);
+        } catch (EmptyResultDataAccessException ex) {
+            throw new BidResultNotFoundException("Bid result not found.");
         }
     }
 
@@ -394,6 +498,18 @@ public class BidRoomService {
 
     private BigDecimal percent(BigDecimal base, String percent) {
         return base.multiply(new BigDecimal(percent)).setScale(2, RoundingMode.HALF_UP);
+    }
+
+    private BigDecimal commissionPercentage(BigDecimal commission, BigDecimal basePrice) {
+        if (commission == null || commission.compareTo(BigDecimal.ZERO) <= 0) {
+            return BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
+        }
+        if (commission.compareTo(new BigDecimal("100")) <= 0) {
+            return commission.setScale(2, RoundingMode.HALF_UP);
+        }
+        return commission
+                .multiply(new BigDecimal("100"))
+                .divide(basePrice, 2, RoundingMode.HALF_UP);
     }
 
     private boolean hasNoMaximum(String category) {

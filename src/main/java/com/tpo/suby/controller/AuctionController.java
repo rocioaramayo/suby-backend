@@ -6,6 +6,7 @@ import com.tpo.suby.dto.response.auction.AuctionDetailResponse;
 import com.tpo.suby.dto.response.auction.AuctionListResponse;
 import com.tpo.suby.dto.response.auction.LotDetailResponse;
 import com.tpo.suby.dto.response.bid.AttendeeRegistrationResponse;
+import com.tpo.suby.dto.response.bid.BidResultResponse;
 import com.tpo.suby.dto.response.bid.BidResponse;
 import com.tpo.suby.dto.response.bid.LiveBidStatusResponse;
 import com.tpo.suby.exception.AdjudicatedLotException;
@@ -13,6 +14,7 @@ import com.tpo.suby.exception.AttendeeAlreadyRegisteredException;
 import com.tpo.suby.exception.AuctionAccessDeniedException;
 import com.tpo.suby.exception.AuctionRoomAccessException;
 import com.tpo.suby.exception.BidRestrictedException;
+import com.tpo.suby.exception.BidResultNotFoundException;
 import com.tpo.suby.exception.InsufficientBalanceException;
 import com.tpo.suby.exception.InvalidQueryParameterException;
 import com.tpo.suby.exception.InvalidBidAmountException;
@@ -122,6 +124,20 @@ public class AuctionController {
                 ApiResponse.<LiveBidStatusResponse>builder()
                         .status("success")
                         .message(status)
+                        .build()
+        );
+    }
+
+    @GetMapping("/{auctionId}/items/{itemId}/bids/result")
+    public ResponseEntity<?> bidResult(
+            @PathVariable Integer auctionId,
+            @PathVariable Integer itemId
+    ) {
+        BidResultResponse result = bidRoomService.bidResult(auctionId, itemId);
+        return ResponseEntity.ok(
+                ApiResponse.<BidResultResponse>builder()
+                        .status("success")
+                        .message(result)
                         .build()
         );
     }
@@ -242,6 +258,16 @@ public class AuctionController {
                 Map.of(
                         "status", "failed",
                         "message", "Saldo insuficiente. Cargá más plata para poder pujar."
+                )
+        );
+    }
+
+    @ExceptionHandler(BidResultNotFoundException.class)
+    public ResponseEntity<?> handleBidResultNotFound(BidResultNotFoundException ex) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(
+                Map.of(
+                        "status", "failed",
+                        "message", "El lote no fue adjudicado aún o no existe."
                 )
         );
     }
