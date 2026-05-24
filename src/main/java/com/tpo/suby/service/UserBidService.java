@@ -1,5 +1,6 @@
 package com.tpo.suby.service;
 
+import com.tpo.suby.dto.request.user.WonItemPaymentRequest;
 import com.tpo.suby.dto.response.user.UserBidHistoryItemResponse;
 import com.tpo.suby.dto.response.user.UserBidHistoryResponse;
 import com.tpo.suby.dto.response.user.WonBidAuctionResponse;
@@ -7,21 +8,31 @@ import com.tpo.suby.dto.response.user.WonBidDetailResponse;
 import com.tpo.suby.dto.response.user.WonBidItemResponse;
 import com.tpo.suby.dto.response.user.WonBidResultResponse;
 import com.tpo.suby.dto.response.user.WonBidTimelineItemResponse;
+import com.tpo.suby.dto.response.user.WonItemPaymentDetailResponse;
+import com.tpo.suby.dto.response.payment.PaymentMethodItemResponse;
 import com.tpo.suby.entity.UsuarioApp;
+import com.tpo.suby.exception.InsufficientPaymentMethodBalanceException;
 import com.tpo.suby.exception.UnauthorizedException;
 import com.tpo.suby.exception.WonBidDetailForbiddenException;
 import com.tpo.suby.exception.WonBidDetailNotFoundException;
+import com.tpo.suby.exception.WonItemAlreadyPaidException;
+import com.tpo.suby.exception.WonItemPaymentNotFoundException;
 import com.tpo.suby.repository.UsuarioAppRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.support.GeneratedKeyHolder;
+import org.springframework.jdbc.support.KeyHolder;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.sql.Date;
+import java.sql.PreparedStatement;
+import java.sql.Statement;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
@@ -119,6 +130,77 @@ public class UserBidService {
                 .build();
     }
 
+    public WonItemPaymentDetailResponse getWonItemPaymentDetail(Integer userId, Integer itemId) {
+        validateOwner(userId);
+
+        if (itemId == null || itemId <= 0) {
+            throw new WonItemPaymentNotFoundException("Artículo no encontrado o no adjudicado a tu cuenta.");
+        }
+
+        WonBidCore wonBid;
+        try {
+            wonBid = wonBidCore(userId, itemId);
+        } catch (WonBidDetailNotFoundException ex) {
+            throw new WonItemPaymentNotFoundException("Artículo no encontrado o no adjudicado a tu cuenta.");
+        }
+        if (!"si".equalsIgnoreCase(wonBid.winner())) {
+            throw new WonItemPaymentNotFoundException("Artículo no encontrado o no adjudicado a tu cuenta.");
+        }
+
+        BigDecimal commissionPct = commissionPercentage(wonBid.commission(), wonBid.basePrice());
+        BigDecimal commissionAmount = wonBid.winningBid()
+                .multiply(commissionPct)
+                .divide(new BigDecimal("100"), 2, RoundingMode.HALF_UP);
+
+        return WonItemPaymentDetailResponse.builder()
+                .itemId(wonBid.itemId())
+                .lotCode(wonBid.lotCode())
+                .title(wonBid.title())
+                .winningBid(wonBid.winningBid())
+                .commission(commissionAmount)
+                .totalToPay(wonBid.winningBid().add(commissionAmount))
+                .estimatedPaymentDate(wonBid.auctionDate().plusDays(6))
+                .paymentMethods(paymentMethods(userId))
+                .build();
+    }
+
+    @Transactional
+    public String confirmWonItemPayment(Integer userId, Integer itemId, WonItemPaymentRequest request) {
+        validateOwner(userId);
+
+        if (itemId == null || itemId <= 0 || request == null || request.getPaymentMethodId() == null) {
+            throw new WonItemPaymentNotFoundException("Artículo no encontrado o no adjudicado a tu cuenta.");
+        }
+
+        WonBidCore wonBid;
+        try {
+            wonBid = wonBidCore(userId, itemId);
+        } catch (WonBidDetailNotFoundException ex) {
+            throw new WonItemPaymentNotFoundException("Artículo no encontrado o no adjudicado a tu cuenta.");
+        }
+        if (!"si".equalsIgnoreCase(wonBid.winner())) {
+            throw new WonItemPaymentNotFoundException("Artículo no encontrado o no adjudicado a tu cuenta.");
+        }
+
+        BigDecimal commissionPct = commissionPercentage(wonBid.commission(), wonBid.basePrice());
+        BigDecimal commissionAmount = wonBid.winningBid()
+                .multiply(commissionPct)
+                .divide(new BigDecimal("100"), 2, RoundingMode.HALF_UP);
+        BigDecimal totalToPay = wonBid.winningBid().add(commissionAmount);
+
+        PaymentMethodState paymentMethod = paymentMethodState(userId, request.getPaymentMethodId());
+        if (paymentMethod.availableBalance().compareTo(totalToPay) < 0) {
+            throw new InsufficientPaymentMethodBalanceException("Saldo insuficiente en el medio de pago seleccionado.");
+        }
+
+        Integer registroId = ensureRegistroSubasta(userId, wonBid, commissionAmount);
+        ensureNotPaid(registroId, userId);
+        insertPago(userId, registroId, request.getPaymentMethodId(), totalToPay);
+        reservePaymentMethodAmount(request.getPaymentMethodId(), totalToPay);
+
+        return "Pago confirmado. Recibirás la confirmación por email.";
+    }
+
     private WonBidCore wonBidCore(Integer userId, Integer itemId) {
         try {
             return jdbcTemplate.queryForObject("""
@@ -128,12 +210,14 @@ public class UserBidService {
                         p.descripcionCatalogo AS title,
                         p.descripcionCompleta AS description,
                         owner.nombre AS owner_at_sale,
+                        d.identificador AS owner_id,
                         s.identificador AS auction_id,
                         COALESCE(c.descripcion, CONCAT('Subasta ', s.identificador)) AS auction_name,
                         s.fecha AS auction_date,
                         s.hora AS auction_hour,
                         s.ubicacion AS auction_location,
                         auctioneer_person.nombre AS auctioneer,
+                        p.identificador AS product_id,
                         winning_bid.importe AS winning_bid,
                         winning_bid.ganador AS winner,
                         ic.comision AS commission,
@@ -160,12 +244,14 @@ public class UserBidService {
                     rs.getString("title"),
                     rs.getString("description"),
                     rs.getString("owner_at_sale"),
+                    rs.getInt("owner_id"),
                     rs.getInt("auction_id"),
                     rs.getString("auction_name"),
                     toLocalDate(rs.getDate("auction_date")),
                     rs.getTime("auction_hour").toLocalTime(),
                     rs.getString("auction_location"),
                     rs.getString("auctioneer"),
+                    rs.getInt("product_id"),
                     rs.getBigDecimal("winning_bid"),
                     rs.getString("winner"),
                     rs.getBigDecimal("commission"),
@@ -226,6 +312,139 @@ public class UserBidService {
                 .toList();
     }
 
+    private List<PaymentMethodItemResponse> paymentMethods(Integer userId) {
+        return jdbcTemplate.query("""
+                SELECT
+                    mdp.identificador AS id,
+                    mdp.tipo AS db_type,
+                    mdp.montoDisponible AS available_balance,
+                    mdp.montoUsado AS used_balance,
+                    tc.numeroEnmascarado,
+                    tc.redTarjeta,
+                    cb.banco AS cuenta_banco,
+                    cb.numeroCuenta,
+                    cc.banco AS cheque_banco
+                FROM mediosDePago mdp
+                LEFT JOIN tarjetasCredito tc ON tc.identificador = mdp.identificador
+                LEFT JOIN cuentasBancarias cb ON cb.identificador = mdp.identificador
+                LEFT JOIN chequesCertificados cc ON cc.identificador = mdp.identificador
+                WHERE mdp.cliente = ?
+                ORDER BY mdp.identificador ASC
+                """, (rs, rowNum) -> {
+            String dbType = rs.getString("db_type");
+            BigDecimal available = rs.getBigDecimal("available_balance");
+            BigDecimal used = rs.getBigDecimal("used_balance");
+            if (available == null) {
+                available = BigDecimal.ZERO;
+            }
+            if (used == null) {
+                used = BigDecimal.ZERO;
+            }
+
+            return PaymentMethodItemResponse.builder()
+                    .id(rs.getInt("id"))
+                    .type(toApiType(dbType))
+                    .label(buildLabel(
+                            dbType,
+                            rs.getString("redTarjeta"),
+                            rs.getString("numeroEnmascarado"),
+                            rs.getString("cuenta_banco"),
+                            rs.getString("numeroCuenta"),
+                            rs.getString("cheque_banco")
+                    ))
+                    .availableBalance(available.subtract(used))
+                    .build();
+        }, userId);
+    }
+
+    private PaymentMethodState paymentMethodState(Integer userId, Integer paymentMethodId) {
+        try {
+            return jdbcTemplate.queryForObject("""
+                    SELECT
+                        mdp.identificador AS id,
+                        COALESCE(mdp.montoDisponible, 0) AS available_balance,
+                        COALESCE(mdp.montoUsado, 0) AS used_balance
+                    FROM mediosDePago mdp
+                    WHERE mdp.identificador = ?
+                      AND mdp.cliente = ?
+                    """, (rs, rowNum) -> new PaymentMethodState(
+                    rs.getInt("id"),
+                    rs.getBigDecimal("available_balance").subtract(rs.getBigDecimal("used_balance"))
+            ), paymentMethodId, userId);
+        } catch (EmptyResultDataAccessException ex) {
+            throw new WonItemPaymentNotFoundException("Artículo no encontrado o no adjudicado a tu cuenta.");
+        }
+    }
+
+    private Integer ensureRegistroSubasta(Integer userId, WonBidCore wonBid, BigDecimal commissionAmount) {
+        try {
+            return jdbcTemplate.queryForObject("""
+                    SELECT TOP 1 identificador
+                    FROM registroDeSubasta
+                    WHERE subasta = ?
+                      AND producto = ?
+                      AND cliente = ?
+                    ORDER BY identificador DESC
+                    """, Integer.class, wonBid.auctionId(), wonBid.productId(), userId);
+        } catch (EmptyResultDataAccessException ex) {
+            KeyHolder keyHolder = new GeneratedKeyHolder();
+            jdbcTemplate.update(connection -> {
+                PreparedStatement ps = connection.prepareStatement("""
+                        INSERT INTO registroDeSubasta (
+                            subasta, duenio, producto, cliente, importe, comision
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?)
+                        """, Statement.RETURN_GENERATED_KEYS);
+                ps.setInt(1, wonBid.auctionId());
+                ps.setInt(2, wonBid.ownerId());
+                ps.setInt(3, wonBid.productId());
+                ps.setInt(4, userId);
+                ps.setBigDecimal(5, wonBid.winningBid());
+                ps.setBigDecimal(6, commissionAmount);
+                return ps;
+            }, keyHolder);
+
+            Number key = keyHolder.getKey();
+            if (key == null) {
+                throw new WonItemPaymentNotFoundException("Artículo no encontrado o no adjudicado a tu cuenta.");
+            }
+            return key.intValue();
+        }
+    }
+
+    private void ensureNotPaid(Integer registroId, Integer userId) {
+        Integer count = jdbcTemplate.queryForObject("""
+                SELECT COUNT(*)
+                FROM pagos
+                WHERE registroSubasta = ?
+                  AND cliente = ?
+                  AND estado IN ('pendiente', 'procesando', 'confirmado')
+                """, Integer.class, registroId, userId);
+
+        if (count != null && count > 0) {
+            throw new WonItemAlreadyPaidException("Este artículo ya fue pagado.");
+        }
+    }
+
+    private void insertPago(Integer userId, Integer registroId, Integer paymentMethodId, BigDecimal totalToPay) {
+        jdbcTemplate.update("""
+                INSERT INTO pagos (
+                    cliente, registroSubasta, medioPago, importe, moneda,
+                    estado, fechaConfirmacion, retiroPresencial, referenciaExterna
+                )
+                VALUES (?, ?, ?, ?, ?, ?, GETDATE(), ?, ?)
+                """, userId, registroId, paymentMethodId, totalToPay, "ARS", "confirmado", "no",
+                "SUBY-PAY-" + registroId + "-" + paymentMethodId);
+    }
+
+    private void reservePaymentMethodAmount(Integer paymentMethodId, BigDecimal totalToPay) {
+        jdbcTemplate.update("""
+                UPDATE mediosDePago
+                SET montoUsado = COALESCE(montoUsado, 0) + ?
+                WHERE identificador = ?
+                """, totalToPay, paymentMethodId);
+    }
+
     private void validateOwner(Integer userId) {
         if (userId == null || userId <= 0) {
             throw new UnauthorizedException("No autorizado.");
@@ -261,18 +480,55 @@ public class UserBidService {
                 .divide(basePrice, 2, RoundingMode.HALF_UP);
     }
 
+    private String toApiType(String dbType) {
+        return switch (dbType) {
+            case "tarjeta_credito" -> "tarjeta";
+            case "cheque_certificado" -> "cheque";
+            default -> dbType;
+        };
+    }
+
+    private String buildLabel(String dbType, String cardBrand, String maskedCard, String bankName, String accountNumber, String checkBank) {
+        return switch (dbType) {
+            case "tarjeta_credito" -> cardLabel(cardBrand, maskedCard);
+            case "cuenta_bancaria" -> "%s - Cta. %s".formatted(bankName, maskLast4(accountNumber));
+            case "cheque_certificado" -> "Cheque certificado - %s".formatted(checkBank == null ? "Pendiente" : checkBank);
+            default -> "Medio de pago";
+        };
+    }
+
+    private String cardLabel(String brand, String masked) {
+        return "%s %s".formatted(capitalize(brand), masked);
+    }
+
+    private String maskLast4(String value) {
+        if (value == null || value.length() < 4) {
+            return "****";
+        }
+        return "****" + value.substring(value.length() - 4);
+    }
+
+    private String capitalize(String value) {
+        if (value == null || value.isBlank()) {
+            return "";
+        }
+        return value.substring(0, 1).toUpperCase() + value.substring(1).toLowerCase();
+    }
+
     private record WonBidCore(
             Integer itemId,
             String lotCode,
             String title,
             String description,
             String ownerAtSale,
+            Integer ownerId,
             Integer auctionId,
             String auctionName,
             LocalDate auctionDate,
             java.time.LocalTime auctionHour,
             String location,
             String auctioneer,
+            Integer productId,
             BigDecimal winningBid,
             String winner,
             BigDecimal commission,
@@ -285,6 +541,12 @@ public class UserBidService {
             Integer bidderNumber,
             Integer bidderClientId,
             BigDecimal amount
+    ) {
+    }
+
+    private record PaymentMethodState(
+            Integer id,
+            BigDecimal availableBalance
     ) {
     }
 }
