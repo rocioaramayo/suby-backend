@@ -3,6 +3,9 @@ package com.tpo.suby.controller;
 import com.tpo.suby.dto.response.ApiResponse;
 import com.tpo.suby.dto.response.user.UserBidHistoryResponse;
 import com.tpo.suby.exception.UnauthorizedException;
+import com.tpo.suby.exception.WonBidDetailForbiddenException;
+import com.tpo.suby.exception.WonBidDetailNotFoundException;
+import com.tpo.suby.dto.response.user.WonBidDetailResponse;
 import com.tpo.suby.service.UserBidService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -33,12 +36,46 @@ public class UserBidController {
         );
     }
 
+    @GetMapping("/{itemId}/won-detail")
+    public ResponseEntity<?> getWonBidDetail(
+            @PathVariable Integer userId,
+            @PathVariable Integer itemId
+    ) {
+        WonBidDetailResponse detail = userBidService.getWonBidDetail(userId, itemId);
+        return ResponseEntity.ok(
+                ApiResponse.<WonBidDetailResponse>builder()
+                        .status("success")
+                        .message(detail)
+                        .build()
+        );
+    }
+
     @ExceptionHandler(UnauthorizedException.class)
     public ResponseEntity<?> handleUnauthorized(UnauthorizedException ex) {
         return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(
                 Map.of(
                         "status", "failed",
                         "message", "No autorizado."
+                )
+        );
+    }
+
+    @ExceptionHandler(WonBidDetailForbiddenException.class)
+    public ResponseEntity<?> handleWonBidForbidden(WonBidDetailForbiddenException ex) {
+        return ResponseEntity.status(HttpStatus.FORBIDDEN).body(
+                Map.of(
+                        "status", "failed",
+                        "message", "Este lote no fue adjudicado a tu cuenta."
+                )
+        );
+    }
+
+    @ExceptionHandler(WonBidDetailNotFoundException.class)
+    public ResponseEntity<?> handleWonBidNotFound(WonBidDetailNotFoundException ex) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(
+                Map.of(
+                        "status", "failed",
+                        "message", "Lote no encontrado en tu historial."
                 )
         );
     }
