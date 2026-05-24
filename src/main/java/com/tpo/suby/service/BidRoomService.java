@@ -3,6 +3,7 @@ package com.tpo.suby.service;
 import com.tpo.suby.dto.request.bid.BidRequest;
 import com.tpo.suby.dto.response.bid.AttendeeRegistrationResponse;
 import com.tpo.suby.dto.response.bid.BidResponse;
+import com.tpo.suby.dto.response.bid.LiveBidStatusResponse;
 import com.tpo.suby.entity.UsuarioApp;
 import com.tpo.suby.exception.AdjudicatedLotException;
 import com.tpo.suby.exception.AttendeeAlreadyRegisteredException;
@@ -26,15 +27,21 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.sql.Date;
+import java.sql.Time;
 import java.text.DecimalFormat;
 import java.text.DecimalFormatSymbols;
 import java.sql.PreparedStatement;
 import java.sql.Statement;
+import java.time.Duration;
+import java.time.LocalDateTime;
 import java.util.Locale;
 
 @Service
 @RequiredArgsConstructor
 public class BidRoomService {
+
+    private static final int AUCTION_DURATION_MINUTES = 210;
 
     private final JdbcTemplate jdbcTemplate;
     private final UsuarioAppRepository usuarioAppRepository;
@@ -99,7 +106,7 @@ public class BidRoomService {
 
         BigDecimal currentOffer = currentOffer(itemId, lot.basePrice());
         BigDecimal minimum = currentOffer.add(percent(lot.basePrice(), "0.01"));
-        BigDecimal maximum = hasNoMaximum(client.category())
+        BigDecimal maximum = hasNoMaximum(lot.auctionCategory())
                 ? null
                 : currentOffer.add(percent(lot.basePrice(), "0.20"));
 
@@ -122,8 +129,68 @@ public class BidRoomService {
                 .itemId(itemId)
                 .winner("no")
                 .newMinimum(amount.add(percent(lot.basePrice(), "0.01")))
-                .newMaximum(hasNoMaximum(client.category()) ? null : amount.add(percent(lot.basePrice(), "0.20")))
+                .newMaximum(hasNoMaximum(lot.auctionCategory()) ? null : amount.add(percent(lot.basePrice(), "0.20")))
                 .build();
+    }
+
+    public LiveBidStatusResponse liveBidStatus(Integer auctionId, Integer itemId) {
+        if (auctionId == null || auctionId <= 0 || itemId == null || itemId <= 0) {
+            throw new NotFoundException("Lote no encontrado.");
+        }
+
+        try {
+            return jdbcTemplate.queryForObject("""
+                    SELECT
+                        ic.identificador AS item_id,
+                        CONCAT('LOT-', RIGHT(CONCAT('000', ic.identificador), 3)) AS lot_code,
+                        ic.precioBase AS base_price,
+                        COALESCE(ic.subastado, 'no') AS auctioned,
+                        s.categoria AS auction_category,
+                        s.fecha AS auction_date,
+                        s.hora AS auction_time,
+                        COALESCE(stats.current_offer, ic.precioBase) AS current_offer,
+                        COALESCE(stats.total_bids, 0) AS total_bids,
+                        bidder.nombre AS last_bidder_name
+                    FROM subastas s
+                    JOIN catalogos c ON c.subasta = s.identificador
+                    JOIN itemsCatalogo ic ON ic.catalogo = c.identificador
+                    OUTER APPLY (
+                        SELECT
+                            MAX(pu.importe) AS current_offer,
+                            COUNT(pu.identificador) AS total_bids,
+                            MAX(pu.identificador) AS last_bid_id
+                        FROM pujos pu
+                        WHERE pu.item = ic.identificador
+                    ) stats
+                    LEFT JOIN pujos last_bid ON last_bid.identificador = stats.last_bid_id
+                    LEFT JOIN asistentes a ON a.identificador = last_bid.asistente
+                    LEFT JOIN personas bidder ON bidder.identificador = a.cliente
+                    WHERE s.identificador = ?
+                      AND ic.identificador = ?
+                    """, (rs, rowNum) -> {
+                BigDecimal basePrice = rs.getBigDecimal("base_price");
+                BigDecimal currentOffer = rs.getBigDecimal("current_offer");
+                String auctionCategory = rs.getString("auction_category");
+                LocalDateTime auctionEnd = LocalDateTime.of(
+                        toLocalDate(rs.getDate("auction_date")),
+                        toLocalTime(rs.getTime("auction_time"))
+                ).plusMinutes(AUCTION_DURATION_MINUTES);
+
+                return LiveBidStatusResponse.builder()
+                        .itemId(rs.getInt("item_id"))
+                        .lotCode(rs.getString("lot_code"))
+                        .currentOffer(currentOffer)
+                        .totalBids(rs.getInt("total_bids"))
+                        .lastBidder(formatBidderName(rs.getString("last_bidder_name")))
+                        .secondsRemaining(Math.max(0, Duration.between(LocalDateTime.now(), auctionEnd).toSeconds()))
+                        .minimumNextBid(currentOffer.add(percent(basePrice, "0.01")))
+                        .maximumNextBid(hasNoMaximum(auctionCategory) ? null : currentOffer.add(percent(basePrice, "0.20")))
+                        .auctioned(rs.getString("auctioned"))
+                        .build();
+            }, auctionId, itemId);
+        } catch (EmptyResultDataAccessException ex) {
+            throw new NotFoundException("Lote no encontrado.");
+        }
     }
 
     private UsuarioApp authenticatedUser() {
@@ -192,7 +259,8 @@ public class BidRoomService {
                     SELECT
                         ic.identificador AS item_id,
                         ic.precioBase AS base_price,
-                        COALESCE(ic.subastado, 'no') AS auctioned
+                        COALESCE(ic.subastado, 'no') AS auctioned,
+                        s.categoria AS auction_category
                     FROM subastas s
                     JOIN catalogos c ON c.subasta = s.identificador
                     JOIN itemsCatalogo ic ON ic.catalogo = c.identificador
@@ -201,7 +269,8 @@ public class BidRoomService {
                     """, (rs, rowNum) -> new LotBidInfo(
                     rs.getInt("item_id"),
                     rs.getBigDecimal("base_price"),
-                    rs.getString("auctioned")
+                    rs.getString("auctioned"),
+                    rs.getString("auction_category")
             ), auctionId, itemId);
         } catch (EmptyResultDataAccessException ex) {
             throw new NotFoundException("Lote no encontrado.");
@@ -354,6 +423,26 @@ public class BidRoomService {
         return value == null ? "comun" : value.toLowerCase(Locale.ROOT).trim();
     }
 
+    private java.time.LocalDate toLocalDate(Date date) {
+        return date == null ? java.time.LocalDate.now() : date.toLocalDate();
+    }
+
+    private java.time.LocalTime toLocalTime(Time time) {
+        return time == null ? java.time.LocalTime.MIDNIGHT : time.toLocalTime();
+    }
+
+    private String formatBidderName(String fullName) {
+        if (fullName == null || fullName.isBlank()) {
+            return null;
+        }
+
+        String[] parts = fullName.trim().split("\\s+");
+        if (parts.length == 1) {
+            return parts[0];
+        }
+        return "%s %s.".formatted(parts[0], parts[parts.length - 1].substring(0, 1).toUpperCase(Locale.ROOT));
+    }
+
     private record ClientInfo(Integer id, String admitted, String category) {
     }
 
@@ -363,6 +452,6 @@ public class BidRoomService {
     private record AttendeeInfo(Integer id, Integer clientId, Integer auctionId) {
     }
 
-    private record LotBidInfo(Integer itemId, BigDecimal basePrice, String auctioned) {
+    private record LotBidInfo(Integer itemId, BigDecimal basePrice, String auctioned, String auctionCategory) {
     }
 }

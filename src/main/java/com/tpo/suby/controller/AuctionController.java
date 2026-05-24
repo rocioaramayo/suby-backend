@@ -7,6 +7,7 @@ import com.tpo.suby.dto.response.auction.AuctionListResponse;
 import com.tpo.suby.dto.response.auction.LotDetailResponse;
 import com.tpo.suby.dto.response.bid.AttendeeRegistrationResponse;
 import com.tpo.suby.dto.response.bid.BidResponse;
+import com.tpo.suby.dto.response.bid.LiveBidStatusResponse;
 import com.tpo.suby.exception.AdjudicatedLotException;
 import com.tpo.suby.exception.AttendeeAlreadyRegisteredException;
 import com.tpo.suby.exception.AuctionAccessDeniedException;
@@ -107,6 +108,20 @@ public class AuctionController {
                 ApiResponse.<BidResponse>builder()
                         .status("success")
                         .message(bid)
+                        .build()
+        );
+    }
+
+    @GetMapping("/{auctionId}/items/{itemId}/bids/live")
+    public ResponseEntity<?> liveBidStatus(
+            @PathVariable Integer auctionId,
+            @PathVariable Integer itemId
+    ) {
+        LiveBidStatusResponse status = bidRoomService.liveBidStatus(auctionId, itemId);
+        return ResponseEntity.ok(
+                ApiResponse.<LiveBidStatusResponse>builder()
+                        .status("success")
+                        .message(status)
                         .build()
         );
     }
