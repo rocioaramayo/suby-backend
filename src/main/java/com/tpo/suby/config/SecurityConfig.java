@@ -69,7 +69,8 @@ public class SecurityConfig {
             response.setContentType("application/json");
             if (request.getRequestURI().contains("/attendees")) {
                 response.getWriter().write("{\"status\":\"failed\",\"message\":\"Debes iniciar sesión para ingresar a la sala de puja.\"}");
-            } else if (request.getRequestURI().contains("/payment-methods")) {
+            } else if (request.getRequestURI().contains("/payment-methods")
+                    || request.getRequestURI().matches(".*/api/v1/users/[^/]+/bids.*")) {
                 response.getWriter().write("{\"status\":\"failed\",\"message\":\"No autorizado.\"}");
             } else {
                 response.getWriter().write("{\"status\":\"failed\",\"message\":\"El enlace de configuracion de contrasena ha expirado o es invalido.\"}");
