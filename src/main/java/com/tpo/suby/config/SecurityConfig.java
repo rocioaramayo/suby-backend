@@ -67,7 +67,9 @@ public class SecurityConfig {
         return (request, response, authException) -> {
             response.setStatus(401);
             response.setContentType("application/json");
-            if (request.getRequestURI().contains("/attendees")) {
+            if (request.getRequestURI().matches(".*/api/v1/users/[^/]+/profile.*")) {
+                response.getWriter().write("{\"status\":\"failed\",\"message\":\"No autorizado. Iniciá sesión para ver tu perfil.\"}");
+            } else if (request.getRequestURI().contains("/attendees")) {
                 response.getWriter().write("{\"status\":\"failed\",\"message\":\"Debes iniciar sesión para ingresar a la sala de puja.\"}");
             } else if (request.getRequestURI().contains("/payment-methods")
                     || request.getRequestURI().matches(".*/api/v1/users/[^/]+/bids.*")) {
