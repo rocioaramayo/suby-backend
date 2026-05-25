@@ -50,6 +50,7 @@ public class SecurityConfig {
                 .requestMatchers("/entregas/puntos/**").permitAll()
                 .requestMatchers("/descuentos/validar").permitAll()
                 .requestMatchers("/api/v1/users/*/password").authenticated()
+                .requestMatchers("/api/v1/users/*/fines/**").authenticated()
             
                 // Resto de rutas: autenticado
                 .anyRequest().authenticated()
@@ -75,7 +76,8 @@ public class SecurityConfig {
                 response.getWriter().write("{\"status\":\"failed\",\"message\":\"Debes iniciar sesión para ingresar a la sala de puja.\"}");
             } else if (request.getRequestURI().contains("/payment-methods")
                     || request.getRequestURI().matches(".*/api/v1/users/[^/]+/bids.*")
-                    || request.getRequestURI().matches(".*/api/v1/users/[^/]+/won-items.*")) {
+                    || request.getRequestURI().matches(".*/api/v1/users/[^/]+/won-items.*")
+                    || request.getRequestURI().matches(".*/api/v1/users/[^/]+/fines.*")) {
                 response.getWriter().write("{\"status\":\"failed\",\"message\":\"No autorizado.\"}");
             } else {
                 response.getWriter().write("{\"status\":\"failed\",\"message\":\"El enlace de configuracion de contrasena ha expirado o es invalido.\"}");
