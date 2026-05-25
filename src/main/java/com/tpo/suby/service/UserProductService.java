@@ -1,0 +1,403 @@
+package com.tpo.suby.service;
+
+import com.tpo.suby.dto.response.user.OwnerProductDepositResponse;
+import com.tpo.suby.dto.response.user.OwnerProductItemResponse;
+import com.tpo.suby.dto.response.user.OwnerProductsResponse;
+import com.tpo.suby.entity.UsuarioApp;
+import com.tpo.suby.exception.InsufficientProductPhotosException;
+import com.tpo.suby.exception.OwnerProductValidationException;
+import com.tpo.suby.exception.UnauthorizedException;
+import com.tpo.suby.repository.UsuarioAppRepository;
+import lombok.RequiredArgsConstructor;
+import org.springframework.dao.EmptyResultDataAccessException;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.support.GeneratedKeyHolder;
+import org.springframework.jdbc.support.KeyHolder;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
+
+import java.io.IOException;
+import java.math.BigDecimal;
+import java.sql.Date;
+import java.sql.PreparedStatement;
+import java.sql.Statement;
+import java.time.LocalDate;
+import java.util.List;
+import java.util.Locale;
+
+@Service
+@RequiredArgsConstructor
+public class UserProductService {
+
+    private final JdbcTemplate jdbcTemplate;
+    private final UsuarioAppRepository usuarioAppRepository;
+
+    public OwnerProductsResponse listOwnerProducts(Integer userId) {
+        validateOwner(userId);
+
+        if (!ownerProfileExists(userId)) {
+            return OwnerProductsResponse.builder()
+                    .products(List.of())
+                    .total(0)
+                    .accepted(0)
+                    .build();
+        }
+
+        List<OwnerProductItemResponse> products = jdbcTemplate.query("""
+                SELECT
+                    p.identificador AS product_id,
+                    COALESCE(pd.titulo, p.descripcionCatalogo, p.descripcionCompleta) AS name,
+                    CASE
+                        WHEN LOWER(COALESCE(pd.esObraDeArte, 'no')) = 'si' THEN 'arte'
+                        WHEN s.identificador IS NOT NULL THEN s.categoria
+                        ELSE 'general'
+                    END AS category,
+                    p.fecha AS date_registered,
+                    CASE
+                        WHEN ic.identificador IS NOT NULL THEN 'aceptado'
+                        ELSE 'en_inspeccion'
+                    END AS inspection_status,
+                    COALESCE(p.disponible, 'no') AS available,
+                    COALESCE(pe.nroPoliza, p.seguro) AS insurance_policy,
+                    dep.identificador AS deposit_id,
+                    dep.nombre AS deposit_name,
+                    COALESCE(ic.precioBase, seg.importe, 0) AS estimated_value,
+                    p.descripcionCatalogo AS catalog_description
+                FROM productos p
+                LEFT JOIN productos_ext pe ON pe.identificador = p.identificador
+                LEFT JOIN productos_detalle pd ON pd.identificador = p.identificador
+                LEFT JOIN depositos dep ON dep.identificador = pe.deposito
+                LEFT JOIN seguros seg ON seg.nroPoliza = COALESCE(pe.nroPoliza, p.seguro)
+                LEFT JOIN itemsCatalogo ic ON ic.producto = p.identificador
+                LEFT JOIN catalogos c ON c.identificador = ic.catalogo
+                LEFT JOIN subastas s ON s.identificador = c.subasta
+                WHERE p.duenio = ?
+                ORDER BY p.identificador DESC
+                """, (rs, rowNum) -> OwnerProductItemResponse.builder()
+                .productId(rs.getInt("product_id"))
+                .name(rs.getString("name"))
+                .category(rs.getString("category"))
+                .dateRegistered(toLocalDate(rs.getDate("date_registered")))
+                .inspectionStatus(rs.getString("inspection_status"))
+                .available(rs.getString("available"))
+                .insurancePolicy(rs.getString("insurance_policy"))
+                .deposit(rs.getObject("deposit_id") == null ? null : OwnerProductDepositResponse.builder()
+                        .id(rs.getInt("deposit_id"))
+                        .name(rs.getString("deposit_name"))
+                        .build())
+                .estimatedValue(rs.getBigDecimal("estimated_value"))
+                .catalogDescription(rs.getString("catalog_description"))
+                .build(), userId);
+
+        int accepted = (int) products.stream()
+                .filter(product -> "aceptado".equalsIgnoreCase(product.getInspectionStatus()))
+                .count();
+
+        return OwnerProductsResponse.builder()
+                .products(products)
+                .total(products.size())
+                .accepted(accepted)
+                .build();
+    }
+
+    @Transactional
+    public String registerOwnerProduct(
+            Integer userId,
+            String name,
+            String condition,
+            String originProvenance,
+            String fullDescription,
+            String insurancePolicy,
+            Boolean ownershipDeclaration,
+            Integer receivingAccountId,
+            MultipartFile[] photos,
+            MultipartFile[] originDocs
+    ) {
+        validateOwner(userId);
+
+        if (isBlank(name)
+                || isBlank(condition)
+                || isBlank(originProvenance)
+                || isBlank(fullDescription)
+                || isBlank(insurancePolicy)
+                || ownershipDeclaration == null
+                || !ownershipDeclaration
+                || receivingAccountId == null
+                || receivingAccountId <= 0) {
+            throw new OwnerProductValidationException("Invalid owner product request.");
+        }
+
+        validatePhotos(photos);
+        ensureInsuranceExists(insurancePolicy);
+        ensureOwnerProfileExists(userId);
+
+        BankAccountData receivingAccount = loadReceivingAccount(userId, receivingAccountId);
+        ensureDestinationAccount(userId, receivingAccount);
+
+        Integer reviewerId = firstEmployeeId();
+        Integer productId = insertProduct(userId, reviewerId, name, fullDescription, insurancePolicy);
+
+        jdbcTemplate.update("""
+                INSERT INTO productos_ext (identificador, deposito, nroPoliza)
+                VALUES (?, NULL, ?)
+                """, productId, insurancePolicy);
+
+        jdbcTemplate.update("""
+                INSERT INTO productos_detalle (
+                    identificador, titulo, descripcionLarga, artista,
+                    fechaCreacion, historia, esObraDeArte
+                )
+                VALUES (?, ?, ?, NULL, NULL, ?, ?)
+                """, productId, name, fullDescription, originProvenance, inferArtCategory(name, fullDescription));
+
+        for (MultipartFile photo : photos) {
+            insertPhoto(productId, photo);
+        }
+
+        if (originDocs != null) {
+            for (MultipartFile originDoc : originDocs) {
+                if (originDoc != null && !originDoc.isEmpty()) {
+                    // La base actual no tiene una tabla dedicada para documentos de origen.
+                    break;
+                }
+            }
+        }
+
+        jdbcTemplate.update("""
+                INSERT INTO solicitudesIngreso (
+                    duenio, estado, fechaSolicitud, descripcionBien,
+                    declaraPropiedad, declaraOrigenLicito, direccionEnvio,
+                    motivoRechazo, revisadoPor, gastosDevolucion
+                )
+                VALUES (?, 'pendiente', GETDATE(), ?, 'si', 'si', NULL, NULL, NULL, NULL)
+                """, userId, name);
+
+        return "Tu artículo fue enviado para revisión. Te notificaremos cuando esté aprobado.";
+    }
+
+    private Integer insertProduct(
+            Integer ownerId,
+            Integer reviewerId,
+            String name,
+            String fullDescription,
+            String insurancePolicy
+    ) {
+        KeyHolder keyHolder = new GeneratedKeyHolder();
+        jdbcTemplate.update(connection -> {
+            PreparedStatement ps = connection.prepareStatement("""
+                    INSERT INTO productos (
+                        fecha, disponible, descripcionCatalogo, descripcionCompleta,
+                        revisor, duenio, seguro
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """, Statement.RETURN_GENERATED_KEYS);
+            ps.setDate(1, Date.valueOf(LocalDate.now()));
+            ps.setString(2, "no");
+            ps.setString(3, name);
+            ps.setString(4, fullDescription);
+            ps.setInt(5, reviewerId);
+            ps.setInt(6, ownerId);
+            ps.setString(7, insurancePolicy);
+            return ps;
+        }, keyHolder);
+
+        Number key = keyHolder.getKey();
+        if (key == null) {
+            throw new OwnerProductValidationException("Invalid owner product request.");
+        }
+        return key.intValue();
+    }
+
+    private void insertPhoto(Integer productId, MultipartFile photo) {
+        if (photo == null || photo.isEmpty()) {
+            return;
+        }
+
+        try {
+            jdbcTemplate.update("""
+                    INSERT INTO fotos (producto, foto)
+                    VALUES (?, ?)
+                    """, productId, photo.getBytes());
+        } catch (IOException ex) {
+            throw new OwnerProductValidationException("Invalid owner product request.");
+        }
+    }
+
+    private void validatePhotos(MultipartFile[] photos) {
+        if (photos == null) {
+            throw new InsufficientProductPhotosException("Missing product photos.");
+        }
+
+        long validPhotos = java.util.Arrays.stream(photos)
+                .filter(photo -> photo != null && !photo.isEmpty())
+                .count();
+
+        if (validPhotos < 6) {
+            throw new InsufficientProductPhotosException("Missing product photos.");
+        }
+    }
+
+    private void ensureInsuranceExists(String insurancePolicy) {
+        Integer count = jdbcTemplate.queryForObject("""
+                SELECT COUNT(*)
+                FROM seguros
+                WHERE nroPoliza = ?
+                """, Integer.class, insurancePolicy);
+
+        if (count == null || count == 0) {
+            throw new OwnerProductValidationException("Invalid insurance policy.");
+        }
+    }
+
+    private BankAccountData loadReceivingAccount(Integer userId, Integer paymentMethodId) {
+        try {
+            return jdbcTemplate.queryForObject("""
+                    SELECT
+                        mdp.identificador AS payment_method_id,
+                        cb.banco AS bank_name,
+                        cb.numeroCuenta AS account_number,
+                        cb.pais AS country_id,
+                        cb.cbu AS cbu,
+                        cb.swift AS swift,
+                        cb.iban AS iban
+                    FROM mediosDePago mdp
+                    JOIN cuentasBancarias cb ON cb.identificador = mdp.identificador
+                    WHERE mdp.identificador = ?
+                      AND mdp.cliente = ?
+                      AND mdp.tipo = 'cuenta_bancaria'
+                    """, (rs, rowNum) -> new BankAccountData(
+                    rs.getInt("payment_method_id"),
+                    rs.getString("bank_name"),
+                    rs.getString("account_number"),
+                    rs.getInt("country_id"),
+                    rs.getString("cbu"),
+                    rs.getString("swift"),
+                    rs.getString("iban")
+            ), paymentMethodId, userId);
+        } catch (EmptyResultDataAccessException ex) {
+            throw new OwnerProductValidationException("Invalid receiving account.");
+        }
+    }
+
+    private void ensureDestinationAccount(Integer userId, BankAccountData account) {
+        Integer ownerAccountId = jdbcTemplate.queryForObject("""
+                SELECT COUNT(*)
+                FROM cuentasDestinoVenta
+                WHERE duenio = ?
+                  AND numeroCuenta = ?
+                """, Integer.class, userId, account.accountNumber());
+
+        if (ownerAccountId != null && ownerAccountId > 0) {
+            return;
+        }
+
+        jdbcTemplate.update("""
+                INSERT INTO cuentasDestinoVenta (
+                    duenio, banco, numeroCuenta, pais,
+                    cbu, swift, iban, estado
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, 'verificada')
+                """, userId, account.bankName(), account.accountNumber(), account.countryId(),
+                account.cbu(), account.swift(), account.iban());
+    }
+
+    private void ensureOwnerProfileExists(Integer userId) {
+        if (ownerProfileExists(userId)) {
+            return;
+        }
+
+        jdbcTemplate.update("""
+                INSERT INTO duenios (
+                    identificador, numeroPais, verificacionFinanciera,
+                    verificacionJudicial, calificacionRiesgo, verificador
+                )
+                VALUES (?, ?, 'no', 'no', 1, ?)
+                """, userId, ownerCountryId(userId), firstEmployeeId());
+    }
+
+    private boolean ownerProfileExists(Integer userId) {
+        Integer count = jdbcTemplate.queryForObject("""
+                SELECT COUNT(*)
+                FROM duenios
+                WHERE identificador = ?
+                """, Integer.class, userId);
+        return count != null && count > 0;
+    }
+
+    private Integer ownerCountryId(Integer userId) {
+        try {
+            return jdbcTemplate.queryForObject("""
+                    SELECT numeroPais
+                    FROM clientes
+                    WHERE identificador = ?
+                    """, Integer.class, userId);
+        } catch (EmptyResultDataAccessException ex) {
+            return null;
+        }
+    }
+
+    private Integer firstEmployeeId() {
+        try {
+            return jdbcTemplate.queryForObject("""
+                    SELECT TOP 1 identificador
+                    FROM empleados
+                    ORDER BY identificador ASC
+                    """, Integer.class);
+        } catch (EmptyResultDataAccessException ex) {
+            throw new OwnerProductValidationException("Missing employee reviewer.");
+        }
+    }
+
+    private void validateOwner(Integer userId) {
+        if (userId == null || userId <= 0) {
+            throw new UnauthorizedException("No autorizado.");
+        }
+
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        if (authentication == null || !authentication.isAuthenticated()
+                || "anonymousUser".equals(authentication.getPrincipal())) {
+            throw new UnauthorizedException("No autorizado.");
+        }
+
+        UsuarioApp user = usuarioAppRepository.findByEmail(authentication.getName())
+                .orElseThrow(() -> new UnauthorizedException("No autorizado."));
+
+        if (!user.getIdentificador().equals(userId)) {
+            throw new UnauthorizedException("No autorizado.");
+        }
+    }
+
+    private LocalDate toLocalDate(Date date) {
+        return date == null ? null : date.toLocalDate();
+    }
+
+    private boolean isBlank(String value) {
+        return value == null || value.isBlank();
+    }
+
+    private String inferArtCategory(String name, String description) {
+        String combined = ((name == null ? "" : name) + " " + (description == null ? "" : description))
+                .toLowerCase(Locale.ROOT);
+        return combined.contains("arte")
+                || combined.contains("oleo")
+                || combined.contains("óleo")
+                || combined.contains("pintura")
+                || combined.contains("escultura")
+                ? "si"
+                : "no";
+    }
+
+    private record BankAccountData(
+            Integer paymentMethodId,
+            String bankName,
+            String accountNumber,
+            Integer countryId,
+            String cbu,
+            String swift,
+            String iban
+    ) {
+    }
+}
