@@ -223,24 +223,6 @@ public class AuthService {
 
     public void onboarding(OnboardingRequest request) {
 
-        Optional<OnboardingUsuario> existente = onboardingUsuarioRepository.findByEmail(request.getEmail());
-
-        if (existente.isPresent()) {
-            String estado = existente.get().getEstado();
-
-            if (estado != null && estado.equalsIgnoreCase("pendiente")) {
-                throw new IllegalStateException("Ya existe una solicitud pendiente para este email.");
-            }
-
-            if (estado != null && estado.equalsIgnoreCase("suspendido")) {
-                throw new IllegalStateException("La cuenta está suspendida.");
-            }
-
-            if (estado != null && estado.equalsIgnoreCase("aprobado")) {
-                throw new IllegalStateException("La cuenta ya fue aprobada.");
-            }
-        }
-
         if (
                 request.getName() == null ||
                 request.getSurname() == null ||
@@ -257,11 +239,36 @@ public class AuthService {
             throw new IllegalArgumentException("errores de validacion");
         }
 
+        String email = request.getEmail().trim();
+
+        Optional<OnboardingUsuario> existente = onboardingUsuarioRepository.findFirstByEmailIgnoreCase(email);
+
+        if (existente.isPresent()) {
+            String estado = existente.get().getEstado();
+
+            if (estado != null && estado.equalsIgnoreCase("pendiente")) {
+                throw new IllegalStateException("Ya existe una solicitud pendiente para este email.");
+            }
+
+            if (estado != null && estado.equalsIgnoreCase("suspendido")) {
+                throw new IllegalStateException("La cuenta está suspendida.");
+            }
+
+            if (estado != null && (
+                estado.equalsIgnoreCase("aprobado") ||
+                estado.equalsIgnoreCase("procesado")
+            )) {
+                throw new IllegalStateException("La cuenta ya fue aprobada.");
+            }
+
+            throw new IllegalStateException("Ya existe una solicitud registrada para este email.");
+        }
+
         try {
             OnboardingUsuario onboarding = OnboardingUsuario.builder()
                 .nombre(request.getName())
                 .apellido(request.getSurname())
-                .email(request.getEmail())
+                .email(email)
                 .documento(request.getDocument())
                 .pais(request.getCountry())
                 .direccionLegal(request.getLegalAddress())
@@ -275,7 +282,7 @@ public class AuthService {
 
                 SimpleMailMessage message = new SimpleMailMessage();
                 message.setFrom("rocioaramay@gmail.com");
-                message.setTo(request.getEmail());
+                message.setTo(email);
                 message.setSubject("Solicitud recibida - Suby");
                 message.setText("""
 Hola %s,

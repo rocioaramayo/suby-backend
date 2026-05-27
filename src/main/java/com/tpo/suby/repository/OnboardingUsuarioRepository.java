@@ -12,5 +12,7 @@ public interface OnboardingUsuarioRepository extends JpaRepository<OnboardingUsu
 
 	Optional<OnboardingUsuario> findByEmail(String email);
 
+	Optional<OnboardingUsuario> findFirstByEmailIgnoreCase(String email);
+
 	List<OnboardingUsuario> findByEstado(String estado);
 }

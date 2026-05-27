@@ -140,8 +140,10 @@ public class AuthController {
             );
 
         } catch (IllegalStateException e) {
-            if ("Ya existe una solicitud pendiente para este email.".equals(e.getMessage())
-                    || "La cuenta ya fue aprobada.".equals(e.getMessage())) {
+            if (e.getMessage() != null && (
+                    e.getMessage().startsWith("Ya existe una solicitud")
+                    || "La cuenta ya fue aprobada.".equals(e.getMessage())
+            )) {
                 return ResponseEntity.status(HttpStatus.CONFLICT).body(
                         Map.of(
                                 "status", "failed",
