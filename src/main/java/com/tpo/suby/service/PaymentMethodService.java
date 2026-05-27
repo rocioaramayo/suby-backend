@@ -24,6 +24,7 @@ import java.math.BigDecimal;
 import java.sql.Date;
 import java.sql.PreparedStatement;
 import java.sql.Statement;
+import java.text.Normalizer;
 import java.time.LocalDate;
 import java.time.YearMonth;
 import java.time.format.DateTimeFormatter;
@@ -213,7 +214,7 @@ public class PaymentMethodService {
         }
 
         Integer employeeId = firstEmployeeId();
-        Integer auctionId = null;
+        Integer auctionId = firstAuctionId();
         Integer paymentMethodId = insertPaymentMethod(
                 userId,
                 "cheque_certificado",
@@ -339,20 +340,42 @@ public class PaymentMethodService {
                     ORDER BY numero ASC
                     """, Integer.class);
         } catch (EmptyResultDataAccessException ex) {
-            return jdbcTemplate.queryForObject("SELECT TOP 1 numero FROM paises ORDER BY numero ASC", Integer.class);
+            try {
+                return jdbcTemplate.queryForObject("""
+                        SELECT TOP 1 numero
+                        FROM paises
+                        WHERE LOWER(nombre) LIKE '%argentina%'
+                           OR LOWER(nombreCorto) LIKE '%ar%'
+                        ORDER BY numero ASC
+                        """, Integer.class);
+            } catch (EmptyResultDataAccessException ignored) {
+                return jdbcTemplate.queryForObject("SELECT TOP 1 numero FROM paises ORDER BY numero ASC", Integer.class);
+            }
         }
     }
 
     private Integer countryId(String country) {
+        String normalizedCountry = normalize(country);
+
         try {
             return jdbcTemplate.queryForObject("""
                     SELECT TOP 1 numero
                     FROM paises
                     WHERE LOWER(nombre) = ? OR LOWER(nombreCorto) = ?
                     ORDER BY numero ASC
-                    """, Integer.class, normalize(country), normalize(country));
+                    """, Integer.class, normalizedCountry, normalizedCountry);
         } catch (EmptyResultDataAccessException ex) {
-            throw new PaymentMethodValidationException("Invalid country.");
+            try {
+                return jdbcTemplate.queryForObject("""
+                        SELECT TOP 1 numero
+                        FROM paises
+                        WHERE LOWER(nombre) LIKE ?
+                           OR LOWER(nombreCorto) LIKE ?
+                        ORDER BY numero ASC
+                        """, Integer.class, "%" + normalizedCountry + "%", "%" + normalizedCountry + "%");
+            } catch (EmptyResultDataAccessException ignored) {
+                throw new PaymentMethodValidationException("Invalid country.");
+            }
         }
     }
 
@@ -462,7 +485,14 @@ public class PaymentMethodService {
     }
 
     private String normalize(String value) {
-        return value == null ? "" : value.toLowerCase(Locale.ROOT).trim();
+        if (value == null) {
+            return "";
+        }
+
+        String normalized = Normalizer.normalize(value.trim(), Normalizer.Form.NFD)
+                .replaceAll("\\p{M}+", "");
+
+        return normalized.toLowerCase(Locale.ROOT);
     }
 
     private String capitalize(String value) {
