@@ -17,6 +17,8 @@ import com.tpo.suby.repository.OnboardingUsuarioRepository;
 import com.tpo.suby.repository.PersonaRepository;
 import com.tpo.suby.repository.RevokedTokenRepository;
 import com.tpo.suby.repository.UsuarioAppRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.LockedException;
@@ -32,6 +34,7 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.io.IOException;
+import java.text.Normalizer;
 import java.time.LocalDateTime;
 import java.util.Random;
 import java.util.List;
@@ -43,6 +46,8 @@ import java.util.UUID;
 @Service
 @RequiredArgsConstructor
 public class AuthService {
+
+    private static final Logger log = LoggerFactory.getLogger(AuthService.class);
 
     private final UsuarioAppRepository usuarioRepository;
     private final OnboardingUsuarioRepository onboardingUsuarioRepository;
@@ -314,53 +319,58 @@ Equipo Suby
             onboardingUsuarioRepository.findByEstado("aprobado");
 
         for (OnboardingUsuario onboarding : aprobados) {
+            try {
+                Optional<UsuarioApp> usuarioExistente = usuarioRepository.findByEmail(onboarding.getEmail());
 
-            boolean existe =
-                usuarioRepository.existsByEmail(
-                    onboarding.getEmail()
-                );
+                Persona persona;
+                String tempPassword = null;
 
-            if (existe) {
-            continue;
-            }
+                if (usuarioExistente.isPresent()) {
+                    persona = usuarioExistente.get().getPersona();
+                } else {
+                    tempPassword = UUID.randomUUID()
+                        .toString()
+                        .substring(0, 8);
 
-            String tempPassword = UUID.randomUUID()
-                .toString()
-                .substring(0, 8);
+                    persona = Persona.builder()
+                        .nombre(onboarding.getNombre())
+                        .documento(onboarding.getDocumento())
+                        .direccion(onboarding.getDireccionLegal())
+                        .estado("activo")
+                        .build();
 
-            Persona persona = Persona.builder()
-                .nombre(onboarding.getNombre())
-                .documento(onboarding.getDocumento())
-                .direccion(onboarding.getDireccionLegal())
-                .estado("activo")
-                .build();
+                    persona = personaRepository.saveAndFlush(persona);
 
-            persona = personaRepository.save(persona);
+                    UsuarioApp usuario = UsuarioApp.builder()
+                        .persona(persona)
+                        .email(onboarding.getEmail())
+                        .passwordHash(
+                            passwordEncoder.encode(tempPassword)
+                        )
+                        .estadoApp("activo")
+                        .ultimoLogin(null)
+                        .intentosFallidos(0)
+                        .bloqueadoHasta(null)
+                        .build();
 
-            UsuarioApp usuario = UsuarioApp.builder()
-                .persona(persona)
-                .email(onboarding.getEmail())
-                .passwordHash(
-                    passwordEncoder.encode(tempPassword)
-                )
-                .estadoApp("activo")
-                .ultimoLogin(null)
-                .intentosFallidos(0)
-                .bloqueadoHasta(null)
-                .build();
+                    usuarioRepository.saveAndFlush(usuario);
+                }
 
-            usuarioRepository.save(usuario);
-            createClientProfile(persona.getIdentificador(), onboarding.getPais());
+                createClientProfile(persona.getIdentificador(), onboarding.getPais());
 
-            // Mark onboarding as processed before sending email to avoid duplicates
-            onboarding.setEstado("procesado");
-            onboardingUsuarioRepository.save(onboarding);
+                // Mark onboarding as processed before sending email to avoid duplicates.
+                onboarding.setEstado("procesado");
+                onboardingUsuarioRepository.save(onboarding);
 
-            SimpleMailMessage message = new SimpleMailMessage();
-            message.setFrom("rocioaramay@gmail.com");
-            message.setTo(onboarding.getEmail());
-            message.setSubject("Cuenta aprobada - Suby");
-            message.setText("""
+                if (tempPassword == null) {
+                    continue;
+                }
+
+                SimpleMailMessage message = new SimpleMailMessage();
+                message.setFrom("rocioaramay@gmail.com");
+                message.setTo(onboarding.getEmail());
+                message.setSubject("Cuenta aprobada - Suby");
+                message.setText("""
 Hola %s,
 
 Tu solicitud de registro fue aprobada correctamente.
@@ -375,16 +385,19 @@ Por seguridad, al iniciar sesión por primera vez se te solicitará cambiar la c
 Saludos,
 Equipo Suby
 """.formatted(
-                onboarding.getNombre(),
-                onboarding.getEmail(),
-                tempPassword
-            ));
+                    onboarding.getNombre(),
+                    onboarding.getEmail(),
+                    tempPassword
+                ));
 
-            try {
-                mailSender.send(message);
+                try {
+                    mailSender.send(message);
+                } catch (Exception e) {
+                    // Log and continue; onboarding already marked processed
+                    log.warn("Failed to send approval email to {}", onboarding.getEmail(), e);
+                }
             } catch (Exception e) {
-                // Log and continue; onboarding already marked processed
-                System.err.println("Failed to send approval email to " + onboarding.getEmail() + ": " + e.getMessage());
+                log.error("Failed to process approved onboarding for {}", onboarding.getEmail(), e);
             }
         }
     }
@@ -425,6 +438,8 @@ Equipo Suby
     }
 
     private Integer resolveCountryId(String country) {
+        String normalizedCountry = normalize(country);
+
         try {
             return jdbcTemplate.queryForObject("""
                     SELECT TOP 1 numero
@@ -433,15 +448,36 @@ Equipo Suby
                     ORDER BY numero ASC
                     """,
                     Integer.class,
-                    normalize(country),
-                    normalize(country)
+                    normalizedCountry,
+                    normalizedCountry
             );
         } catch (EmptyResultDataAccessException ex) {
-            throw new IllegalStateException("No se encontró el país de la solicitud.");
+            try {
+                return jdbcTemplate.queryForObject("""
+                        SELECT TOP 1 numero
+                        FROM paises
+                        WHERE LOWER(nombre) LIKE ?
+                           OR LOWER(nombreCorto) LIKE ?
+                        ORDER BY numero ASC
+                        """,
+                        Integer.class,
+                        "%" + normalizedCountry + "%",
+                        "%" + normalizedCountry + "%"
+                );
+            } catch (EmptyResultDataAccessException ignored) {
+                throw new IllegalStateException("No se encontró el país de la solicitud.");
+            }
         }
     }
 
     private String normalize(String value) {
-        return value == null ? "" : value.trim().toLowerCase();
+        if (value == null) {
+            return "";
+        }
+
+        String normalized = Normalizer.normalize(value.trim(), Normalizer.Form.NFD)
+                .replaceAll("\\p{M}+", "");
+
+        return normalized.toLowerCase();
     }
 }
