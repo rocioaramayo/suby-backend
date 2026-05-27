@@ -3,6 +3,7 @@ package com.tpo.suby.controller;
 import com.tpo.suby.dto.request.ForgotPasswordRequest;
 import com.tpo.suby.dto.request.LoginRequest;
 import com.tpo.suby.dto.request.OnboardingRequest;
+import com.tpo.suby.dto.request.ResetPasswordRequest;
 import com.tpo.suby.dto.request.VerifyCodeRequest;
 import com.tpo.suby.exception.CodeExpiredException;
 import com.tpo.suby.exception.InvalidTokenException;
@@ -46,6 +47,15 @@ public class AuthController {
     ) {
         return ResponseEntity.ok(
                 authService.verifyCode(request)
+        );
+    }
+
+    @PostMapping("/password/reset")
+    public ResponseEntity<?> resetPassword(
+            @Valid @RequestBody ResetPasswordRequest request
+    ) {
+        return ResponseEntity.ok(
+                authService.resetPassword(request)
         );
     }
 

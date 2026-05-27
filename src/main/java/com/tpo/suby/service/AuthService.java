@@ -3,6 +3,7 @@ package com.tpo.suby.service;
 import com.tpo.suby.dto.request.ForgotPasswordRequest;
 import com.tpo.suby.dto.request.LoginRequest;
 import com.tpo.suby.dto.request.OnboardingRequest;
+import com.tpo.suby.dto.request.ResetPasswordRequest;
 import com.tpo.suby.dto.request.VerifyCodeRequest;
 import com.tpo.suby.dto.response.ApiResponse;
 import com.tpo.suby.config.JwtService;
@@ -138,21 +139,7 @@ public class AuthService {
                 "No se encontró una solicitud de recuperación de contraseña para este correo."
             ));
 
-            if (usuario.getTokenRecuperacion() == null || usuario.getTokenExpira() == null) {
-                throw new NotFoundException(
-                    "No se encontró una solicitud de recuperación de contraseña para este correo."
-                );
-            }
-
-        if (usuario.getTokenExpira() == null || usuario.getTokenExpira().isBefore(LocalDateTime.now())) {
-            throw new CodeExpiredException("El código de verificación ha expirado.");
-        }
-
-        if (usuario.getTokenRecuperacion() == null || !usuario.getTokenRecuperacion().equals(request.getCode())) {
-            throw new org.springframework.security.authentication.BadCredentialsException(
-                "El código ingresado es incorrecto."
-            );
-        }
+        validateRecoveryCode(usuario, request.getCode());
 
         return Map.of(
             "status", "success",
@@ -161,6 +148,31 @@ public class AuthService {
             )
         );
         }
+
+    @Transactional
+    public Map<String, Object> resetPassword(ResetPasswordRequest request) {
+        UsuarioApp usuario = usuarioRepository
+                .findByEmail(request.getEmail())
+                .orElseThrow(() -> new NotFoundException(
+                        "No se encontró una solicitud de recuperación de contraseña para este correo."
+                ));
+
+        validateRecoveryCode(usuario, request.getCode());
+        validateNewPassword(request.getPassword(), request.getPasswordConfirmation());
+
+        usuario.setPasswordHash(passwordEncoder.encode(request.getPassword()));
+        usuario.setUltimoLogin(LocalDateTime.now());
+        usuario.setIntentosFallidos(0);
+        usuario.setBloqueadoHasta(null);
+        usuario.setTokenRecuperacion(null);
+        usuario.setTokenExpira(null);
+        usuarioRepository.save(usuario);
+
+        return Map.of(
+                "status", "success",
+                "message", "La contrasena ha sido configurada exitosamente."
+        );
+    }
 
     public ApiResponse<Map<String, Object>> login(LoginRequest request) {
 
@@ -224,6 +236,33 @@ public class AuthService {
                 .status("success")
                 .message(message)
                 .build();
+    }
+
+    private void validateRecoveryCode(UsuarioApp usuario, String code) {
+        if (usuario.getTokenRecuperacion() == null || usuario.getTokenExpira() == null) {
+            throw new NotFoundException(
+                    "No se encontró una solicitud de recuperación de contraseña para este correo."
+            );
+        }
+
+        if (usuario.getTokenExpira().isBefore(LocalDateTime.now())) {
+            throw new CodeExpiredException("El código de verificación ha expirado.");
+        }
+
+        if (!usuario.getTokenRecuperacion().equals(code)) {
+            throw new BadCredentialsException("El código ingresado es incorrecto.");
+        }
+    }
+
+    private void validateNewPassword(String password, String passwordConfirmation) {
+        if (password == null
+                || passwordConfirmation == null
+                || !password.equals(passwordConfirmation)
+                || password.length() < 8) {
+            throw new RuntimeException(
+                    "Errores de validacion: Las contrasenas no coinciden o no alcanzan el minimo de 8 caracteres."
+            );
+        }
     }
 
     public void onboarding(OnboardingRequest request) {
