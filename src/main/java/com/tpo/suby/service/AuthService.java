@@ -223,6 +223,10 @@ public class AuthService {
 
     public void onboarding(OnboardingRequest request) {
 
+        if (request.getEmail() != null && usuarioRepository.existsByEmail(request.getEmail().trim())) {
+            throw new IllegalStateException("La cuenta ya fue aprobada.");
+        }
+
         if (
                 request.getName() == null ||
                 request.getSurname() == null ||
@@ -346,7 +350,7 @@ Equipo Suby
                 .build();
 
             usuarioRepository.save(usuario);
-            createClientProfile(persona.getIdentificador());
+            createClientProfile(persona.getIdentificador(), onboarding.getPais());
 
             // Mark onboarding as processed before sending email to avoid duplicates
             onboarding.setEstado("procesado");
@@ -385,17 +389,19 @@ Equipo Suby
         }
     }
 
-    private void createClientProfile(Integer personId) {
+    private void createClientProfile(Integer personId, String country) {
         if (clientExists(personId)) {
             return;
         }
+
+        Integer countryId = resolveCountryId(country);
 
         jdbcTemplate.update("""
                 INSERT INTO clientes (
                     identificador, numeroPais, admitido, categoria, verificador
                 )
-                VALUES (?, NULL, ?, ?, ?)
-                """, personId, "si", "comun", firstEmployeeId());
+                VALUES (?, ?, ?, ?, ?)
+                """, personId, countryId, "si", "comun", firstEmployeeId());
     }
 
     private boolean clientExists(Integer personId) {
@@ -416,5 +422,26 @@ Equipo Suby
         } catch (EmptyResultDataAccessException ex) {
             throw new IllegalStateException("No existe un empleado verificador para crear el cliente.");
         }
+    }
+
+    private Integer resolveCountryId(String country) {
+        try {
+            return jdbcTemplate.queryForObject("""
+                    SELECT TOP 1 numero
+                    FROM paises
+                    WHERE LOWER(nombre) = ? OR LOWER(nombreCorto) = ?
+                    ORDER BY numero ASC
+                    """,
+                    Integer.class,
+                    normalize(country),
+                    normalize(country)
+            );
+        } catch (EmptyResultDataAccessException ex) {
+            throw new IllegalStateException("No se encontró el país de la solicitud.");
+        }
+    }
+
+    private String normalize(String value) {
+        return value == null ? "" : value.trim().toLowerCase();
     }
 }
