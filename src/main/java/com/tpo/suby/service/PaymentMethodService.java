@@ -41,6 +41,7 @@ public class PaymentMethodService {
     private final JdbcTemplate jdbcTemplate;
     private final JdbcClient jdbcClient;
     private final UsuarioAppRepository usuarioAppRepository;
+    private final UserCategoryService userCategoryService;
 
     public PaymentMethodsResponse listPaymentMethods(Integer userId) {
         validateOwner(userId);
@@ -145,11 +146,13 @@ public class PaymentMethodService {
                 VALUES (?, ?, ?, ?, ?, ?)
                 """, paymentMethodId, request.getCardHolder(), masked, brand, "no", defaultCountryId());
 
-        return CreatedPaymentMethodResponse.builder()
+        CreatedPaymentMethodResponse response = CreatedPaymentMethodResponse.builder()
                 .paymentMethodId(paymentMethodId)
                 .type("tarjeta")
                 .label(cardLabel(brand, masked))
                 .build();
+        userCategoryService.refreshCategory(userId);
+        return response;
     }
 
     private CreatedPaymentMethodResponse addBankAccount(Integer userId, PaymentMethodRequest request) {
@@ -190,11 +193,13 @@ public class PaymentMethodService {
                 isArgentina(request.getCountry()) ? "corriente" : "extranjera",
                 countryId, cbu, null, iban);
 
-        return CreatedPaymentMethodResponse.builder()
+        CreatedPaymentMethodResponse response = CreatedPaymentMethodResponse.builder()
                 .paymentMethodId(paymentMethodId)
                 .type("cuenta_bancaria")
                 .label("%s - Cta. %s".formatted(request.getBankName(), maskLast4(request.getAccountNumber())))
                 .build();
+        userCategoryService.refreshCategory(userId);
+        return response;
     }
 
     private CreatedPaymentMethodResponse addCertifiedCheck(Integer userId, PaymentMethodRequest request) {
@@ -233,11 +238,13 @@ public class PaymentMethodService {
                 """, paymentMethodId, request.getBankName(), request.getCheckNumber(),
                 request.getAmount(), Date.valueOf(request.getIssueDate()), employeeId, auctionId);
 
-        return CreatedPaymentMethodResponse.builder()
+        CreatedPaymentMethodResponse response = CreatedPaymentMethodResponse.builder()
                 .paymentMethodId(paymentMethodId)
                 .type("cheque")
                 .label("Cheque certificado - %s".formatted(request.getBankName()))
                 .build();
+        userCategoryService.refreshCategory(userId);
+        return response;
     }
 
     private Integer insertPaymentMethod(

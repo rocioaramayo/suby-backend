@@ -47,6 +47,7 @@ public class UserBidService {
     private final JdbcTemplate jdbcTemplate;
     private final UsuarioAppRepository usuarioAppRepository;
     private final PrivateMessageService privateMessageService;
+    private final UserCategoryService userCategoryService;
 
     public UserBidHistoryResponse getBidHistory(Integer userId) {
         validateOwner(userId);
@@ -208,6 +209,7 @@ public class UserBidService {
                         .formatted(formatMoney(totalToPay), defaultText(wonBid.title()), defaultText(wonBid.auctionName())),
                 paymentConfirmedMessageData(userId, wonBid, commissionPct, commissionAmount, totalToPay)
         );
+        userCategoryService.refreshCategory(userId);
 
         return "Pago confirmado. Recibirás la confirmación por email.";
     }

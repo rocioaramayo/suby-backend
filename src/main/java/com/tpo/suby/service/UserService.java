@@ -28,6 +28,7 @@ public class UserService {
     private final UsuarioAppRepository usuarioAppRepository;
     private final PasswordEncoder passwordEncoder;
     private final JdbcTemplate jdbcTemplate;
+    private final UserCategoryService userCategoryService;
 
     public void changePassword(Integer userId, ChangePasswordRequest request) {
 
@@ -84,6 +85,7 @@ public class UserService {
                 "No autorizado. Iniciá sesión para ver tu perfil.",
                 "No tenés permiso para ver el perfil de otro usuario."
         );
+        userCategoryService.refreshCategory(usuarioLogueado.getIdentificador());
 
         try {
             return jdbcTemplate.queryForObject("""
@@ -140,6 +142,7 @@ public class UserService {
                 "No autorizado.",
                 "No tenés permiso para ver las estadísticas de otro usuario."
         );
+        userCategoryService.refreshCategory(usuarioLogueado.getIdentificador());
 
         try {
             StatsRow stats = jdbcTemplate.queryForObject("""
