@@ -40,6 +40,7 @@ import java.time.LocalDateTime;
 import java.util.Random;
 import java.util.List;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -58,6 +59,7 @@ public class AuthService {
     private final PasswordEncoder passwordEncoder;
     private final JavaMailSender mailSender;
     private final JdbcTemplate jdbcTemplate;
+    private final PrivateMessageService privateMessageService;
 
     private final JwtService jwtService;
 
@@ -397,6 +399,14 @@ Equipo Suby
 
                 createClientProfile(persona.getIdentificador(), onboarding.getPais());
 
+                privateMessageService.createPrivateMessage(
+                        persona.getIdentificador(),
+                        "cuenta_aprobada",
+                        "Bienvenido a Suby",
+                        "Tu solicitud de registro fue aprobada correctamente. Ya podés ingresar a Suby.",
+                        approvalMessageData(onboarding.getNombre())
+                );
+
                 // Mark onboarding as processed before sending email to avoid duplicates.
                 onboarding.setEstado("procesado");
                 onboardingUsuarioRepository.save(onboarding);
@@ -518,5 +528,21 @@ Equipo Suby
                 .replaceAll("\\p{M}+", "");
 
         return normalized.toLowerCase();
+    }
+
+    private Map<String, String> approvalMessageData(String firstName) {
+        Map<String, String> data = new LinkedHashMap<>();
+        data.put("headline", "Bienvenido a Suby");
+        data.put("greeting", "¡Bienvenido a Suby, la plataforma de subastas más exclusiva!");
+        data.put("first_name", firstName == null ? "" : firstName);
+        data.put("steps_title", "Primeros pasos");
+        data.put("step_1", "Completá tu perfil y agregá medios de pago.");
+        data.put("step_2", "Explorá las subastas activas y próximas.");
+        data.put("step_3", "Pujá en los artículos que te interesen.");
+        data.put("category_title", "Categorías de usuario");
+        data.put("category_body", "Comenzás como usuario Común. A medida que participás en subastas y agregás medios de pago, podés ascender a categorías superiores.");
+        data.put("cta_label", "Ir al inicio");
+        data.put("cta_target", "/home");
+        return data;
     }
 }

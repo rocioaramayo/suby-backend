@@ -1,8 +1,11 @@
 package com.tpo.suby.service;
 
+import com.tpo.suby.dto.response.user.UserNotificationDetailResponse;
 import com.tpo.suby.dto.response.user.UserNotificationItemResponse;
+import com.tpo.suby.dto.response.user.UserNotificationReadResponse;
 import com.tpo.suby.dto.response.user.UserNotificationsResponse;
 import com.tpo.suby.entity.UsuarioApp;
+import com.tpo.suby.exception.NotFoundException;
 import com.tpo.suby.exception.UnauthorizedException;
 import com.tpo.suby.repository.UsuarioAppRepository;
 import lombok.RequiredArgsConstructor;
@@ -12,12 +15,13 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
-import java.sql.Timestamp;
 import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 
 @Service
 @RequiredArgsConstructor
@@ -32,11 +36,7 @@ public class UserNotificationService {
     public UserNotificationsResponse getNotifications(Integer userId, Boolean unreadOnly) {
         validateOwner(userId);
 
-        List<NotificationRow> notifications = new ArrayList<>();
-        notifications.addAll(privateMessages(userId));
-        notifications.addAll(paymentNotifications(userId));
-        notifications.addAll(fineNotifications(userId));
-
+        List<NotificationRow> notifications = allNotifications(userId);
         notifications.sort(Comparator.comparing(NotificationRow::createdAt).reversed());
 
         long unreadCount = notifications.stream()
@@ -64,6 +64,67 @@ public class UserNotificationService {
                 .build();
     }
 
+    public UserNotificationDetailResponse getNotificationDetail(Integer userId, Integer notificationId) {
+        validateOwner(userId);
+
+        NotificationRow notification = findNotification(userId, notificationId);
+        Map<String, String> data = notification.source() == NotificationSource.PRIVATE_MESSAGE
+                ? privateMessageData(notification.rawId())
+                : Map.of();
+
+        return UserNotificationDetailResponse.builder()
+                .id(notification.id())
+                .type(notification.type())
+                .title(notification.title())
+                .body(notification.body())
+                .read(notification.read())
+                .createdAt(notification.createdAt()
+                        .atZone(ZoneId.systemDefault())
+                        .toInstant()
+                        .toString())
+                .data(data)
+                .build();
+    }
+
+    public UserNotificationReadResponse markAsRead(Integer userId, Integer notificationId) {
+        validateOwner(userId);
+
+        NotificationRow notification = findNotification(userId, notificationId);
+        if (notification.source() == NotificationSource.PRIVATE_MESSAGE && !notification.read()) {
+            int updated = jdbcTemplate.update("""
+                    UPDATE mensajes_privados
+                    SET leido = 'si',
+                        fechaLeido = GETDATE()
+                    WHERE identificador = ?
+                      AND destinatario = ?
+                    """, notification.rawId(), userId);
+
+            if (updated == 0) {
+                throw new NotFoundException("Mensaje no encontrado.");
+            }
+        }
+
+        return UserNotificationReadResponse.builder()
+                .id(notification.id())
+                .read(true)
+                .build();
+    }
+
+    private List<NotificationRow> allNotifications(Integer userId) {
+        List<NotificationRow> notifications = new ArrayList<>();
+        notifications.addAll(privateMessages(userId));
+        notifications.addAll(paymentNotifications(userId));
+        notifications.addAll(fineNotifications(userId));
+        return notifications;
+    }
+
+    private NotificationRow findNotification(Integer userId, Integer notificationId) {
+        return allNotifications(userId).stream()
+                .filter(notification -> notification.id().equals(notificationId))
+                .findFirst()
+                .orElseThrow(() -> new NotFoundException("Mensaje no encontrado."));
+    }
+
     private List<NotificationRow> privateMessages(Integer userId) {
         return jdbcTemplate.query("""
                 SELECT
@@ -81,7 +142,9 @@ public class UserNotificationService {
                 rs.getString("title"),
                 rs.getString("body"),
                 rs.getInt("is_read") == 1,
-                rs.getTimestamp("created_at").toLocalDateTime()
+                rs.getTimestamp("created_at").toLocalDateTime(),
+                NotificationSource.PRIVATE_MESSAGE,
+                rs.getInt("id")
         ), userId);
     }
 
@@ -113,7 +176,9 @@ public class UserNotificationService {
                     "Tenés un pago pendiente por %s en %s."
                             .formatted(formatMoney(totalAmount), defaultText(auctionName, itemTitle)),
                     "si".equalsIgnoreCase(rs.getString("read_flag")),
-                    rs.getTimestamp("created_at").toLocalDateTime()
+                    rs.getTimestamp("created_at").toLocalDateTime(),
+                    NotificationSource.PAYMENT,
+                    rs.getInt("id")
             );
         }, userId);
     }
@@ -156,9 +221,29 @@ public class UserNotificationService {
                     title,
                     body,
                     false,
-                    rs.getTimestamp("created_at").toLocalDateTime()
+                    rs.getTimestamp("created_at").toLocalDateTime(),
+                    NotificationSource.FINE,
+                    rs.getInt("id")
             );
         }, userId);
+    }
+
+    private Map<String, String> privateMessageData(Integer messageId) {
+        List<Map.Entry<String, String>> rows = jdbcTemplate.query("""
+                SELECT clave, valor
+                FROM mensajes_datos
+                WHERE mensaje = ?
+                ORDER BY identificador ASC
+                """, (rs, rowNum) -> Map.entry(
+                rs.getString("clave"),
+                rs.getString("valor")
+        ), messageId);
+
+        Map<String, String> data = new LinkedHashMap<>();
+        for (Map.Entry<String, String> row : rows) {
+            data.put(row.getKey(), row.getValue());
+        }
+        return data;
     }
 
     private void validateOwner(Integer userId) {
@@ -202,7 +287,15 @@ public class UserNotificationService {
             String title,
             String body,
             boolean read,
-            java.time.LocalDateTime createdAt
+            java.time.LocalDateTime createdAt,
+            NotificationSource source,
+            Integer rawId
     ) {
+    }
+
+    private enum NotificationSource {
+        PRIVATE_MESSAGE,
+        PAYMENT,
+        FINE
     }
 }

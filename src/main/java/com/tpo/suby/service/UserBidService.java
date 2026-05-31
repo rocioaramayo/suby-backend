@@ -36,7 +36,9 @@ import java.sql.Statement;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 @Service
 @RequiredArgsConstructor
@@ -44,6 +46,7 @@ public class UserBidService {
 
     private final JdbcTemplate jdbcTemplate;
     private final UsuarioAppRepository usuarioAppRepository;
+    private final PrivateMessageService privateMessageService;
 
     public UserBidHistoryResponse getBidHistory(Integer userId) {
         validateOwner(userId);
@@ -197,6 +200,14 @@ public class UserBidService {
         ensureNotPaid(registroId, userId);
         insertPago(userId, registroId, request.getPaymentMethodId(), totalToPay);
         reservePaymentMethodAmount(request.getPaymentMethodId(), totalToPay);
+        privateMessageService.createPrivateMessage(
+                userId,
+                "pago_confirmado",
+                "Pago confirmado",
+                "Se confirmó el pago de %s por %s en %s."
+                        .formatted(formatMoney(totalToPay), defaultText(wonBid.title()), defaultText(wonBid.auctionName())),
+                paymentConfirmedMessageData(userId, wonBid, commissionPct, commissionAmount, totalToPay)
+        );
 
         return "Pago confirmado. Recibirás la confirmación por email.";
     }
@@ -513,6 +524,40 @@ public class UserBidService {
             return "";
         }
         return value.substring(0, 1).toUpperCase() + value.substring(1).toLowerCase();
+    }
+
+    private String formatMoney(BigDecimal amount) {
+        BigDecimal safeAmount = amount == null ? BigDecimal.ZERO : amount;
+        return "$ " + safeAmount.setScale(2, RoundingMode.HALF_UP);
+    }
+
+    private String defaultText(String value) {
+        return value == null || value.isBlank() ? "tu operación" : value;
+    }
+
+    private Map<String, String> paymentConfirmedMessageData(
+            Integer userId,
+            WonBidCore wonBid,
+            BigDecimal commissionPct,
+            BigDecimal commissionAmount,
+            BigDecimal totalToPay
+    ) {
+        Map<String, String> data = new LinkedHashMap<>();
+        data.put("headline", "Información de pago — Subasta Ganada");
+        data.put("item_id", String.valueOf(wonBid.itemId()));
+        data.put("auction_id", String.valueOf(wonBid.auctionId()));
+        data.put("lot_code", defaultText(wonBid.lotCode()));
+        data.put("item_title", defaultText(wonBid.title()));
+        data.put("auction_name", defaultText(wonBid.auctionName()));
+        data.put("winning_bid", formatMoney(wonBid.winningBid()));
+        data.put("commission_pct", commissionPct.setScale(2, RoundingMode.HALF_UP).toPlainString());
+        data.put("commission_amount", formatMoney(commissionAmount));
+        data.put("shipping_amount", formatMoney(BigDecimal.ZERO));
+        data.put("total_to_pay", formatMoney(totalToPay));
+        data.put("status", "confirmado");
+        data.put("cta_label", "Ver compra");
+        data.put("cta_target", "/users/%s/won-items/%s/payment".formatted(userId, wonBid.itemId()));
+        return data;
     }
 
     private record WonBidCore(
