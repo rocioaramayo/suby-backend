@@ -66,12 +66,12 @@ public class BidRoomService {
             throw new AuctionRoomAccessException("No access to auction room.");
         }
 
-        if (attendeeExists(auctionId, client.id())) {
-            throw new AttendeeAlreadyRegisteredException("Already registered.");
-        }
-
         if (!hasPaymentMethod(client.id())) {
             throw new MissingPaymentMethodException("Missing payment method.");
+        }
+
+        if (attendeeExists(auctionId, client.id())) {
+            return existingAttendee(auctionId, client.id());
         }
 
         Integer bidderNumber = nextBidderNumber(auctionId);
@@ -459,6 +459,20 @@ public class BidRoomService {
             throw new AuctionRoomAccessException("Could not register attendee.");
         }
         return key.intValue();
+    }
+
+    private AttendeeRegistrationResponse existingAttendee(Integer auctionId, Integer clientId) {
+        return jdbcTemplate.queryForObject("""
+                SELECT identificador, numeroPostor
+                FROM asistentes
+                WHERE subasta = ?
+                  AND cliente = ?
+                """, (rs, rowNum) -> AttendeeRegistrationResponse.builder()
+                .attendeeId(rs.getInt("identificador"))
+                .bidderNumber(rs.getInt("numeroPostor"))
+                .auctionId(auctionId)
+                .clientId(clientId)
+                .build(), auctionId, clientId);
     }
 
     private Integer insertBid(Integer attendeeId, Integer itemId, BigDecimal amount) {
