@@ -319,13 +319,11 @@ public class AuctionService {
 
         if (status != null && !status.isBlank()) {
             filters.add("""
-                    CASE
-                        WHEN s.estado = 'abierta' AND CAST(s.fecha AS DATE) = CAST(GETDATE() AS DATE) THEN 'en_vivo'
-                        WHEN s.estado = 'abierta' AND CAST(s.fecha AS DATE) > CAST(GETDATE() AS DATE) THEN 'proxima'
-                        ELSE 'finalizada'
-                    END = ?
-                    """);
+                    %s = ?
+                    """.formatted(AuctionStatusSql.normalizedStatusCase("s.estado", "s.fecha")));
             params.add(normalize(status));
+        } else {
+            filters.add(AuctionStatusSql.principalFlowFilter("s.estado", "s.fecha"));
         }
 
         if (search != null && !search.isBlank()) {

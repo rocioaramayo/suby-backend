@@ -39,21 +39,20 @@ public class HomeService {
                     COALESCE(c.descripcion, CONCAT('Subasta ', s.identificador)) AS auction_name,
                     ps.nombre AS auctioneer,
                     s.fecha AS auction_date,
-                    CASE
-                        WHEN s.estado = 'abierta' AND CAST(s.fecha AS DATE) = CAST(GETDATE() AS DATE) THEN 'en_subasta'
-                        WHEN s.estado = 'abierta' THEN 'proxima'
-                        ELSE s.estado
-                    END AS status
+                    %s AS status
                 FROM itemsCatalogo ic
                 JOIN productos p ON p.identificador = ic.producto
                 JOIN catalogos c ON c.identificador = ic.catalogo
                 JOIN subastas s ON s.identificador = c.subasta
                 LEFT JOIN subastadores sub ON sub.identificador = s.subastador
                 LEFT JOIN personas ps ON ps.identificador = sub.identificador
-                WHERE s.estado = 'abierta'
+                WHERE %s
                   AND (ic.subastado IS NULL OR ic.subastado = 'no')
                 ORDER BY s.fecha ASC, ic.precioBase DESC
-                """;
+                """.formatted(
+                AuctionStatusSql.normalizedStatusCase("s.estado", "s.fecha"),
+                AuctionStatusSql.principalFlowFilter("s.estado", "s.fecha")
+        );
 
         return jdbcTemplate.query(sql, (rs, rowNum) -> FeaturedLotResponse.builder()
                 .itemId(rs.getInt("item_id"))
@@ -71,20 +70,20 @@ public class HomeService {
 
     private List<HomeAuctionResponse> getUpcomingAuctions() {
         String sql = auctionSql("""
-                WHERE s.estado = 'abierta'
+                WHERE %s
                   AND CAST(s.fecha AS DATE) > CAST(GETDATE() AS DATE)
                 ORDER BY s.fecha ASC, s.hora ASC
-                """);
+                """.formatted(AuctionStatusSql.activeStateFilter("s.estado")));
 
         return jdbcTemplate.query(sql, (rs, rowNum) -> toAuctionResponse(rs));
     }
 
     private List<HomeAuctionResponse> getLiveAuctions() {
         String sql = auctionSql("""
-                WHERE s.estado = 'abierta'
+                WHERE %s
                   AND CAST(s.fecha AS DATE) = CAST(GETDATE() AS DATE)
                 ORDER BY s.hora ASC
-                """);
+                """.formatted(AuctionStatusSql.activeStateFilter("s.estado")));
 
         return jdbcTemplate.query(sql, (rs, rowNum) -> toAuctionResponse(rs));
     }
@@ -98,9 +97,8 @@ public class HomeService {
                     s.fecha AS auction_date,
                     s.hora AS auction_time,
                     CASE
-                        WHEN s.estado = 'abierta' AND CAST(s.fecha AS DATE) = CAST(GETDATE() AS DATE) THEN 'en_vivo'
-                        WHEN s.estado = 'abierta' THEN 'proxima'
-                        ELSE s.estado
+                        WHEN %s AND CAST(s.fecha AS DATE) = CAST(GETDATE() AS DATE) THEN 'en_vivo'
+                        ELSE 'proxima'
                     END AS status,
                     s.ubicacion AS location,
                     s.categoria AS category,
@@ -123,7 +121,10 @@ public class HomeService {
                     WHERE c.subasta = s.identificador
                 ) lotes
                 %s
-                """.formatted(filter);
+                """.formatted(
+                AuctionStatusSql.activeStateFilter("s.estado"),
+                filter
+        );
     }
 
     private HomeAuctionResponse toAuctionResponse(java.sql.ResultSet rs) throws java.sql.SQLException {
