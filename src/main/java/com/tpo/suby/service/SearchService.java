@@ -19,22 +19,23 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 public class SearchService {
 
-    private static final Set<String> VALID_TYPES = Set.of("auctions", "lots");
+    private static final String TYPE_AUCTIONS = "auctions";
+    private static final String TYPE_LOTS = "lots";
+    private static final Set<String> VALID_TYPES = Set.of(TYPE_AUCTIONS, TYPE_LOTS);
 
     private final JdbcTemplate jdbcTemplate;
 
     public SearchResponse search(String query, String type) {
         String normalizedQuery = normalizeQuery(query);
         String normalizedType = normalizeType(type);
-        String like = "%" + normalizedQuery + "%";
 
-        List<SearchAuctionItemResponse> auctions = "lots".equals(normalizedType)
+        List<SearchAuctionItemResponse> auctions = TYPE_LOTS.equals(normalizedType)
                 ? List.of()
-                : searchAuctions(like);
+                : searchAuctionSessions(normalizedQuery);
 
-        List<SearchLotItemResponse> lots = "auctions".equals(normalizedType)
+        List<SearchLotItemResponse> lots = TYPE_AUCTIONS.equals(normalizedType)
                 ? List.of()
-                : searchLots(like);
+                : searchCatalogLots(normalizedQuery);
 
         return SearchResponse.builder()
                 .auctions(auctions)
@@ -42,7 +43,9 @@ public class SearchService {
                 .build();
     }
 
-    private List<SearchAuctionItemResponse> searchAuctions(String like) {
+    private List<SearchAuctionItemResponse> searchAuctionSessions(String normalizedQuery) {
+        String like = "%" + normalizedQuery + "%";
+
         return jdbcTemplate.query("""
                 SELECT
                     s.identificador AS id,
@@ -87,7 +90,9 @@ public class SearchService {
                 .build(), like, like, like, like, like, like);
     }
 
-    private List<SearchLotItemResponse> searchLots(String like) {
+    private List<SearchLotItemResponse> searchCatalogLots(String normalizedQuery) {
+        String like = "%" + normalizedQuery + "%";
+
         return jdbcTemplate.query("""
                 SELECT
                     ic.identificador AS item_id,

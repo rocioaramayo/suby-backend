@@ -23,6 +23,10 @@ public class SearchController {
 
     private final SearchService searchService;
 
+    /**
+     * type=auctions => busca sesiones completas de subasta
+     * type=lots     => busca piezas/lotes dentro de cualquier subasta
+     */
     @GetMapping
     public ResponseEntity<?> search(
             @RequestParam("q") String query,

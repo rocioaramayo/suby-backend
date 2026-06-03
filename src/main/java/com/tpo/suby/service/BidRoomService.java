@@ -8,13 +8,11 @@ import com.tpo.suby.dto.response.bid.LiveBidStatusResponse;
 import com.tpo.suby.dto.response.bid.WinnerResponse;
 import com.tpo.suby.entity.UsuarioApp;
 import com.tpo.suby.exception.AdjudicatedLotException;
-import com.tpo.suby.exception.AttendeeAlreadyRegisteredException;
 import com.tpo.suby.exception.AuctionRoomAccessException;
 import com.tpo.suby.exception.BidRestrictedException;
 import com.tpo.suby.exception.BidResultNotFoundException;
 import com.tpo.suby.exception.InsufficientBalanceException;
 import com.tpo.suby.exception.InvalidBidAmountException;
-import com.tpo.suby.exception.MissingPaymentMethodException;
 import com.tpo.suby.exception.NotFoundException;
 import com.tpo.suby.exception.UnauthorizedException;
 import com.tpo.suby.repository.UsuarioAppRepository;
@@ -61,13 +59,24 @@ public class BidRoomService {
         AuctionInfo auction = auctionInfo(auctionId);
 
         if (!"activo".equalsIgnoreCase(user.getEstadoApp())
-                || !"si".equalsIgnoreCase(client.admitted())
-                || categoryRank(auction.category()) > categoryRank(client.category())) {
+                || !"si".equalsIgnoreCase(client.admitted())) {
             throw new AuctionRoomAccessException("No access to auction room.");
         }
 
+        if (categoryRank(auction.category()) > categoryRank(client.category())) {
+            return observerAccess(
+                    auctionId,
+                    client.id(),
+                    "Tu categoría actual no habilita la puja en esta subasta. Podés ingresar como observador."
+            );
+        }
+
         if (!hasPaymentMethod(client.id())) {
-            throw new MissingPaymentMethodException("Missing payment method.");
+            return observerAccess(
+                    auctionId,
+                    client.id(),
+                    "Necesitás registrar un medio de pago para pujar. Podés ingresar como observador."
+            );
         }
 
         if (attendeeExists(auctionId, client.id())) {
@@ -82,6 +91,9 @@ public class BidRoomService {
                 .bidderNumber(bidderNumber)
                 .auctionId(auctionId)
                 .clientId(client.id())
+                .accessMode("bidder")
+                .canBid(true)
+                .readOnlyReason(null)
                 .build();
     }
 
@@ -472,7 +484,22 @@ public class BidRoomService {
                 .bidderNumber(rs.getInt("numeroPostor"))
                 .auctionId(auctionId)
                 .clientId(clientId)
+                .accessMode("bidder")
+                .canBid(true)
+                .readOnlyReason(null)
                 .build(), auctionId, clientId);
+    }
+
+    private AttendeeRegistrationResponse observerAccess(Integer auctionId, Integer clientId, String reason) {
+        return AttendeeRegistrationResponse.builder()
+                .attendeeId(null)
+                .bidderNumber(null)
+                .auctionId(auctionId)
+                .clientId(clientId)
+                .accessMode("observer")
+                .canBid(false)
+                .readOnlyReason(reason)
+                .build();
     }
 
     private Integer insertBid(Integer attendeeId, Integer itemId, BigDecimal amount) {

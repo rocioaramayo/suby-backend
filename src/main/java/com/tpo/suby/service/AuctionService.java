@@ -8,15 +8,12 @@ import com.tpo.suby.dto.response.auction.AuctionListResponse;
 import com.tpo.suby.dto.response.auction.AuctioneerResponse;
 import com.tpo.suby.dto.response.auction.LotAuctionResponse;
 import com.tpo.suby.dto.response.auction.LotDetailResponse;
-import com.tpo.suby.exception.AuctionAccessDeniedException;
 import com.tpo.suby.exception.InvalidQueryParameterException;
 import com.tpo.suby.exception.LotNotFoundException;
 import com.tpo.suby.exception.NotFoundException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.security.core.Authentication;
-import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 
 import java.sql.Date;
@@ -192,8 +189,6 @@ public class AuctionService {
             throw new NotFoundException("Subasta no encontrada.");
         }
 
-        validateAuctionAccess(detail.getCategory());
-
         List<AuctionCatalogItemResponse> items = jdbcTemplate.query("""
                 SELECT
                     ic.identificador AS item_id,
@@ -357,49 +352,6 @@ public class AuctionService {
         if (status != null && !status.isBlank() && !VALID_STATUSES.contains(normalize(status))) {
             throw new InvalidQueryParameterException("Parámetros de consulta inválidos.");
         }
-    }
-
-    private void validateAuctionAccess(String auctionCategory) {
-        String userCategory = getCurrentUserCategory();
-        if (categoryRank(auctionCategory) > categoryRank(userCategory)) {
-            throw new AuctionAccessDeniedException(
-                    "Esta subasta es exclusiva para usuarios categoría %s. Tu categoría actual es %s."
-                            .formatted(displayCategory(auctionCategory), displayCategory(userCategory))
-            );
-        }
-    }
-
-    private String getCurrentUserCategory() {
-        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
-        if (authentication == null || !authentication.isAuthenticated()
-                || "anonymousUser".equals(authentication.getPrincipal())) {
-            return "comun";
-        }
-
-        try {
-            return jdbcTemplate.queryForObject("""
-                    SELECT COALESCE(c.categoria, 'comun')
-                    FROM usuarios_app u
-                    LEFT JOIN clientes c ON c.identificador = u.identificador
-                    WHERE u.email = ?
-                    """, String.class, authentication.getName());
-        } catch (EmptyResultDataAccessException ex) {
-            return "comun";
-        }
-    }
-
-    private int categoryRank(String category) {
-        return switch (normalize(category)) {
-            case "especial" -> 2;
-            case "plata" -> 3;
-            case "oro" -> 4;
-            case "platino" -> 5;
-            default -> 1;
-        };
-    }
-
-    private String displayCategory(String category) {
-        return normalize(category).toUpperCase(Locale.ROOT);
     }
 
     private String normalize(String value) {

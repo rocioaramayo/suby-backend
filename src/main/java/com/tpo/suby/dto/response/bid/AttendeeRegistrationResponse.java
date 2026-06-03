@@ -19,4 +19,13 @@ public class AttendeeRegistrationResponse {
 
     @JsonProperty("client_id")
     private Integer clientId;
+
+    @JsonProperty("access_mode")
+    private String accessMode;
+
+    @JsonProperty("can_bid")
+    private Boolean canBid;
+
+    @JsonProperty("read_only_reason")
+    private String readOnlyReason;
 }
