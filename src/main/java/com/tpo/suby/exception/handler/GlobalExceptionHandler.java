@@ -8,6 +8,7 @@ import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.InsufficientAuthenticationException;
 import org.springframework.security.core.AuthenticationException;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
@@ -62,6 +63,16 @@ public class GlobalExceptionHandler {
                 Map.of(
                         "status", "failed",
                         "message", "El enlace de configuracion de contrasena ha expirado o es invalido."
+                )
+        );
+    }
+
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
+    public ResponseEntity<?> handleMaxUploadSizeExceeded(MaxUploadSizeExceededException ex) {
+        return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE).body(
+                Map.of(
+                        "status", "failed",
+                        "message", "Las imágenes superan el tamaño máximo permitido. Probá subir fotos más livianas o en menor resolución."
                 )
         );
     }
