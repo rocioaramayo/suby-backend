@@ -20,54 +20,76 @@ public class HomeService {
     private final JdbcTemplate jdbcTemplate;
 
     public HomeResponse getHome() {
-        return HomeResponse.builder()
-                .featuredLots(getFeaturedLots())
-                .upcomingAuctions(getUpcomingAuctions())
-                .liveAuctions(getLiveAuctions())
-                .build();
-    }
+    System.out.println("HOME inicio");
 
-    private List<FeaturedLotResponse> getFeaturedLots() {
-        String sql = """
-                SELECT TOP 10
-                    ic.identificador AS item_id,
-                    CONCAT('LOT-', RIGHT(CONCAT('000', ic.identificador), 3)) AS lot_code,
-                    p.descripcionCompleta AS title,
-                    ic.precioBase AS base_price,
-                    s.categoria AS category,
-                    s.identificador AS auction_id,
-                    COALESCE(c.descripcion, CONCAT('Subasta ', s.identificador)) AS auction_name,
-                    ps.nombre AS auctioneer,
-                    s.fecha AS auction_date,
-                    %s AS status
-                FROM itemsCatalogo ic
-                JOIN productos p ON p.identificador = ic.producto
-                JOIN catalogos c ON c.identificador = ic.catalogo
-                JOIN subastas s ON s.identificador = c.subasta
-                LEFT JOIN subastadores sub ON sub.identificador = s.subastador
-                LEFT JOIN personas ps ON ps.identificador = sub.identificador
-                WHERE %s
-                  AND (ic.subastado IS NULL OR ic.subastado = 'no')
-                ORDER BY s.fecha ASC, ic.precioBase DESC
-                """.formatted(
-                AuctionStatusSql.normalizedStatusCase("s.estado", "s.fecha"),
-                AuctionStatusSql.principalFlowFilter("s.estado", "s.fecha")
-        );
+    System.out.println("HOME getFeaturedLots");
+    List<FeaturedLotResponse> featuredLots = getFeaturedLots();
+    System.out.println("HOME getFeaturedLots OK: " + featuredLots.size());
 
-        return jdbcTemplate.query(sql, (rs, rowNum) -> FeaturedLotResponse.builder()
-                .itemId(rs.getInt("item_id"))
-                .lotCode(rs.getString("lot_code"))
-                .title(rs.getString("title"))
-                .basePrice(rs.getBigDecimal("base_price"))
-                .category(rs.getString("category"))
-                .auctionId(rs.getInt("auction_id"))
-                .auctionName(rs.getString("auction_name"))
-                .auctioneer(rs.getString("auctioneer"))
-                .auctionDate(toLocalDate(rs.getDate("auction_date")))
-                .status(rs.getString("status"))
-                .build());
-    }
+    System.out.println("HOME getUpcomingAuctions");
+    List<HomeAuctionResponse> upcomingAuctions = getUpcomingAuctions();
+    System.out.println("HOME getUpcomingAuctions OK: " + upcomingAuctions.size());
 
+    System.out.println("HOME getLiveAuctions");
+    List<HomeAuctionResponse> liveAuctions = getLiveAuctions();
+    System.out.println("HOME getLiveAuctions OK: " + liveAuctions.size());
+
+    return HomeResponse.builder()
+            .featuredLots(featuredLots)
+            .upcomingAuctions(upcomingAuctions)
+            .liveAuctions(liveAuctions)
+            .build();
+}
+
+private List<FeaturedLotResponse> getFeaturedLots() {
+    System.out.println("HOME getFeaturedLots SQL final");
+
+    String sql = """
+            SELECT TOP 10
+                ic.identificador AS item_id,
+                CONCAT('LOT-', RIGHT(CONCAT('000', ic.identificador), 3)) AS lot_code,
+                COALESCE(p.descripcionCompleta, p.descripcionCatalogo) AS title,
+                ic.precioBase AS base_price,
+                s.categoria AS category,
+                COALESCE(pd.categoriaTematica, 'otros') AS theme_category,
+                s.identificador AS auction_id,
+                COALESCE(c.descripcion, CONCAT('Subasta ', s.identificador)) AS auction_name,
+                CAST(NULL AS VARCHAR(100)) AS auctioneer,
+                s.fecha AS auction_date,
+                CASE
+                    WHEN s.estado = 'abierta' AND CAST(s.fecha AS DATE) = CAST(GETDATE() AS DATE) THEN 'en_vivo'
+                    WHEN s.estado = 'abierta' AND CAST(s.fecha AS DATE) > CAST(GETDATE() AS DATE) THEN 'proxima'
+                    ELSE 'finalizada'
+                END AS status
+            FROM dbo.itemsCatalogo ic
+            JOIN dbo.productos p ON p.identificador = ic.producto
+            LEFT JOIN dbo.productos_detalle pd ON pd.identificador = p.identificador
+            JOIN dbo.catalogos c ON c.identificador = ic.catalogo
+            JOIN dbo.subastas s ON s.identificador = c.subasta
+            WHERE (ic.subastado IS NULL OR ic.subastado = 'no')
+              AND s.estado = 'abierta'
+              AND CAST(s.fecha AS DATE) >= CAST(GETDATE() AS DATE)
+            ORDER BY s.fecha ASC, ic.precioBase DESC
+            """;
+
+    List<FeaturedLotResponse> result = jdbcTemplate.query(sql, (rs, rowNum) -> FeaturedLotResponse.builder()
+            .itemId(rs.getInt("item_id"))
+            .lotCode(rs.getString("lot_code"))
+            .title(rs.getString("title"))
+            .basePrice(rs.getBigDecimal("base_price"))
+            .category(rs.getString("category"))
+            .themeCategory(rs.getString("theme_category"))
+            .auctionId(rs.getInt("auction_id"))
+            .auctionName(rs.getString("auction_name"))
+            .auctioneer(rs.getString("auctioneer"))
+            .auctionDate(toLocalDate(rs.getDate("auction_date")))
+            .status(rs.getString("status"))
+            .build());
+
+    System.out.println("HOME getFeaturedLots SQL final OK: " + result.size());
+
+    return result;
+}
     private List<HomeAuctionResponse> getUpcomingAuctions() {
         String sql = auctionSql("""
                 WHERE %s

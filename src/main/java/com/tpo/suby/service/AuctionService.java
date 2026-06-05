@@ -189,28 +189,31 @@ public class AuctionService {
             throw new NotFoundException("Subasta no encontrada.");
         }
 
-        List<AuctionCatalogItemResponse> items = jdbcTemplate.query("""
+                List<AuctionCatalogItemResponse> items = jdbcTemplate.query("""
                 SELECT
                     ic.identificador AS item_id,
                     CONCAT('LOT-', RIGHT(CONCAT('000', ic.identificador), 3)) AS lot_code,
                     p.descripcionCompleta AS title,
                     CAST(NULL AS VARCHAR(250)) AS attribution,
                     owner.nombre AS owner,
-                    ic.precioBase AS base_price
+                    ic.precioBase AS base_price,
+                    %s AS theme_category
                 FROM catalogos c
                 JOIN itemsCatalogo ic ON ic.catalogo = c.identificador
                 JOIN productos p ON p.identificador = ic.producto
+                LEFT JOIN productos_detalle pd ON pd.identificador = p.identificador
                 LEFT JOIN duenios d ON d.identificador = p.duenio
                 LEFT JOIN personas owner ON owner.identificador = d.identificador
                 WHERE c.subasta = ?
                 ORDER BY ic.identificador ASC
-                """, (rs, rowNum) -> AuctionCatalogItemResponse.builder()
+                """.formatted(ThemeCategorySql.themeCategoryCase("pd", "p")), (rs, rowNum) -> AuctionCatalogItemResponse.builder()
                 .itemId(rs.getInt("item_id"))
                 .lotCode(rs.getString("lot_code"))
                 .title(rs.getString("title"))
                 .attribution(rs.getString("attribution"))
                 .owner(rs.getString("owner"))
                 .basePrice(rs.getBigDecimal("base_price"))
+                .themeCategory(rs.getString("theme_category"))
                 .build(), auctionId);
 
         return AuctionDetailResponse.builder()
@@ -243,6 +246,7 @@ public class AuctionService {
                         CONCAT('LOT-', RIGHT(CONCAT('000', ic.identificador), 3)) AS lot_code,
                         p.descripcionCatalogo AS title,
                         s.categoria AS category,
+                        %s AS theme_category,
                         CAST(NULL AS VARCHAR(250)) AS artist,
                         CAST(NULL AS VARCHAR(100)) AS period,
                         p.descripcionCompleta AS description,
@@ -263,6 +267,7 @@ public class AuctionService {
                     JOIN catalogos c ON c.subasta = s.identificador
                     JOIN itemsCatalogo ic ON ic.catalogo = c.identificador
                     JOIN productos p ON p.identificador = ic.producto
+                    LEFT JOIN productos_detalle pd ON pd.identificador = p.identificador
                     LEFT JOIN duenios d ON d.identificador = p.duenio
                     LEFT JOIN personas owner ON owner.identificador = d.identificador
                     LEFT JOIN subastadores sub ON sub.identificador = s.subastador
@@ -274,11 +279,12 @@ public class AuctionService {
                     ) offers
                     WHERE s.identificador = ?
                       AND ic.identificador = ?
-                    """, (rs, rowNum) -> LotDetailResponse.builder()
+                    """.formatted(ThemeCategorySql.themeCategoryCase("pd", "p")), (rs, rowNum) -> LotDetailResponse.builder()
                     .itemId(rs.getInt("item_id"))
                     .lotCode(rs.getString("lot_code"))
                     .title(rs.getString("title"))
                     .category(rs.getString("category"))
+                    .themeCategory(rs.getString("theme_category"))
                     .artist(rs.getString("artist"))
                     .period(rs.getString("period"))
                     .description(rs.getString("description"))

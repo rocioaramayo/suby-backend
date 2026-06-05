@@ -24,6 +24,9 @@ public class FeaturedLotResponse {
 
     private String category;
 
+    @JsonProperty("theme_category")
+    private String themeCategory;
+
     @JsonProperty("auction_id")
     private Integer auctionId;
 

@@ -50,11 +50,7 @@ public class UserProductService {
                 SELECT
                     p.identificador AS product_id,
                     COALESCE(pd.titulo, p.descripcionCatalogo, p.descripcionCompleta) AS name,
-                    CASE
-                        WHEN LOWER(COALESCE(pd.esObraDeArte, 'no')) = 'si' THEN 'arte'
-                        WHEN s.identificador IS NOT NULL THEN s.categoria
-                        ELSE 'general'
-                    END AS category,
+                    %s AS category,
                     p.fecha AS date_registered,
                     CASE
                         WHEN ic.identificador IS NOT NULL THEN 'aceptado'
@@ -76,7 +72,7 @@ public class UserProductService {
                 LEFT JOIN subastas s ON s.identificador = c.subasta
                 WHERE p.duenio = ?
                 ORDER BY p.identificador DESC
-                """, (rs, rowNum) -> OwnerProductItemResponse.builder()
+                """.formatted(ThemeCategorySql.themeCategoryCase("pd", "p")), (rs, rowNum) -> OwnerProductItemResponse.builder()
                 .productId(rs.getInt("product_id"))
                 .name(rs.getString("name"))
                 .category(rs.getString("category"))
@@ -148,10 +144,10 @@ public class UserProductService {
         jdbcTemplate.update("""
                 INSERT INTO productos_detalle (
                     identificador, titulo, descripcionLarga, artista,
-                    fechaCreacion, historia, esObraDeArte
+                    fechaCreacion, historia, esObraDeArte, categoriaTematica
                 )
-                VALUES (?, ?, ?, NULL, NULL, ?, ?)
-                """, productId, name, fullDescription, originProvenance, inferArtCategory(name, fullDescription));
+                VALUES (?, ?, ?, NULL, NULL, ?, ?, ?)
+                """, productId, name, fullDescription, originProvenance, inferArtCategory(name, fullDescription), inferThemeCategory(name, fullDescription));
 
         for (MultipartFile photo : photos) {
             insertPhoto(productId, photo);
@@ -388,6 +384,31 @@ public class UserProductService {
                 || combined.contains("escultura")
                 ? "si"
                 : "no";
+    }
+
+    private String inferThemeCategory(String name, String description) {
+        String combined = ((name == null ? "" : name) + " " + (description == null ? "" : description))
+                .toLowerCase(Locale.ROOT);
+
+        if (combined.contains("joy") || combined.contains("reloj") || combined.contains("diamante") || combined.contains("oro")) {
+            return "joyeria";
+        }
+
+        if (combined.contains("veh") || combined.contains("auto") || combined.contains("moto")) {
+            return "vehiculos";
+        }
+
+        if (combined.contains("mobili") || combined.contains("antig") || combined.contains("mesa")
+                || combined.contains("sillon") || combined.contains("decor")) {
+            return "mobiliario";
+        }
+
+        if (combined.contains("arte") || combined.contains("oleo") || combined.contains("óleo")
+                || combined.contains("pintura") || combined.contains("escultura")) {
+            return "arte";
+        }
+
+        return "otros";
     }
 
     private record BankAccountData(

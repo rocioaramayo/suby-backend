@@ -21,6 +21,9 @@ public class LotDetailResponse {
 
     private String category;
 
+    @JsonProperty("theme_category")
+    private String themeCategory;
+
     private String artist;
 
     private String period;
