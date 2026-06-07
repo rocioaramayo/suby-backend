@@ -179,10 +179,10 @@ public class AuthService {
     public ApiResponse<Map<String, Object>> login(LoginRequest request) {
 
         UsuarioApp usuario = usuarioRepository
-                .findByEmail(request.getEmail())
-                .orElseThrow(() ->
-                        new RuntimeException("Usuario no encontrado")
-                );
+        .findByEmail(request.getEmail())
+        .orElseThrow(() ->
+                new BadCredentialsException("Credenciales inválidas.")
+        );
 
         // Verificar si la cuenta está bloqueada temporalmente
         if (usuario.getBloqueadoHasta() != null &&

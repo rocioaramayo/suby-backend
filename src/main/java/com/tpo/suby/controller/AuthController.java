@@ -150,16 +150,23 @@ public class AuthController {
             );
 
         } catch (IllegalStateException e) {
-            if (e.getMessage() != null && (
-                    e.getMessage().startsWith("Ya existe una solicitud")
-                    || "La cuenta ya fue aprobada.".equals(e.getMessage())
-            )) {
+            if ("La cuenta ya fue aprobada.".equals(e.getMessage())) {
+                    return ResponseEntity.status(HttpStatus.CONFLICT).body(
+                            Map.of(
+                                    "status", "failed",
+                                    "message", e.getMessage(),
+                                    "code", "ACCOUNT_APPROVED"
+                            )
+                    );
+            }
+
+            if (e.getMessage() != null && e.getMessage().startsWith("Ya existe una solicitud")) {
                 return ResponseEntity.status(HttpStatus.CONFLICT).body(
-                        Map.of(
-                                "status", "failed",
-                                "message", e.getMessage()
-                        )
-                );
+                            Map.of(
+                                    "status", "failed",
+                                    "message", e.getMessage()
+                            )
+                    );
             }
 
             if ("La cuenta está suspendida.".equals(e.getMessage())) {
