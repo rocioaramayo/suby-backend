@@ -19,6 +19,8 @@ public class AuctionLifecycleService {
 
     private static final int AUCTION_DURATION_MINUTES = 210;
     private static final BigDecimal ESTIMATED_SHIPPING_AMOUNT = new BigDecimal("150.00");
+    private static final String COMPANY_BUYER_DOCUMENT = "SUBY-COMPANY-BUYER";
+    private static final String COMPANY_BUYER_NAME = "Suby";
 
     private final JdbcTemplate jdbcTemplate;
     private final PrivateMessageService privateMessageService;
@@ -74,11 +76,7 @@ public class AuctionLifecycleService {
     private void settleItem(AuctionSettlementInfo auction, Integer itemId) {
         WinningBidInfo winningBid = highestBid(itemId);
         if (winningBid == null) {
-            jdbcTemplate.update("""
-                    UPDATE itemsCatalogo
-                    SET subastado = 'si'
-                    WHERE identificador = ?
-                    """, itemId);
+            settleUnsoldItemForCompanyPurchase(auction, itemId);
             return;
         }
 
@@ -129,6 +127,48 @@ public class AuctionLifecycleService {
         );
     }
 
+    private void settleUnsoldItemForCompanyPurchase(AuctionSettlementInfo auction, Integer itemId) {
+        UnsoldItemInfo item = unsoldItemInfo(itemId);
+        if (item == null) {
+            jdbcTemplate.update("""
+                    UPDATE itemsCatalogo
+                    SET subastado = 'si'
+                    WHERE identificador = ?
+                    """, itemId);
+            return;
+        }
+
+        Integer companyBuyerId = ensureCompanyBuyerProfile();
+        jdbcTemplate.update("""
+                UPDATE itemsCatalogo
+                SET subastado = 'si'
+                WHERE identificador = ?
+                """, itemId);
+
+        jdbcTemplate.update("""
+                UPDATE productos
+                SET duenio = ?
+                WHERE identificador = ?
+                """, companyBuyerId, item.productId());
+
+        ensureRegistroSubasta(
+                auction.id(),
+                item.ownerId(),
+                item.productId(),
+                companyBuyerId,
+                item.basePrice(),
+                new BigDecimal("0.02")
+        );
+        ensureCompanyPurchaseMessage(
+                item.ownerId(),
+                item.itemId(),
+                item.productId(),
+                item.itemTitle(),
+                item.auctionName(),
+                item.basePrice()
+        );
+    }
+
     private WinningBidInfo highestBid(Integer itemId) {
         try {
             return jdbcTemplate.queryForObject("""
@@ -163,6 +203,38 @@ public class AuctionLifecycleService {
                     rs.getString("item_title"),
                     rs.getString("auction_name")
             ), itemId);
+        } catch (EmptyResultDataAccessException ex) {
+            return null;
+        }
+    }
+
+    private UnsoldItemInfo unsoldItemInfo(Integer itemId) {
+        try {
+            return jdbcTemplate.queryForObject("""
+                SELECT
+                ic.identificador AS item_id,
+                ic.precioBase AS base_price,
+                ic.comision AS item_commission,
+                p.identificador AS product_id,
+                d.identificador AS owner_id,
+                COALESCE(pd.titulo, p.descripcionCatalogo, p.descripcionCompleta) AS item_title,
+                COALESCE(c.descripcion, CONCAT('Subasta ', s.identificador)) AS auction_name
+                FROM itemsCatalogo ic
+                JOIN productos p ON p.identificador = ic.producto
+                LEFT JOIN productos_detalle pd ON pd.identificador = p.identificador
+                LEFT JOIN duenios d ON d.identificador = p.duenio
+                LEFT JOIN catalogos c ON c.identificador = ic.catalogo
+                LEFT JOIN subastas s ON s.identificador = c.subasta
+                WHERE ic.identificador = ?
+                """, (rs, rowNum) -> new UnsoldItemInfo(
+                rs.getInt("item_id"),
+                rs.getBigDecimal("base_price"),
+                rs.getBigDecimal("item_commission"),
+                rs.getInt("product_id"),
+                rs.getInt("owner_id"),
+                rs.getString("item_title"),
+                rs.getString("auction_name")
+        ), itemId);
         } catch (EmptyResultDataAccessException ex) {
             return null;
         }
@@ -298,6 +370,104 @@ public class AuctionLifecycleService {
         return value == null || value.isBlank() ? "tu operacion" : value;
     }
 
+    private Integer ensureCompanyBuyerProfile() {
+        Integer personId = jdbcTemplate.query("""
+                SELECT identificador
+                FROM personas
+                WHERE documento = ?
+                """, rs -> rs.next() ? rs.getInt("identificador") : null, COMPANY_BUYER_DOCUMENT);
+
+        if (personId == null) {
+            jdbcTemplate.update("""
+                    INSERT INTO personas (documento, nombre, direccion, estado, foto)
+                    VALUES (?, ?, ?, 'activo', NULL)
+                    """, COMPANY_BUYER_DOCUMENT, COMPANY_BUYER_NAME, "Compras internas Suby");
+
+            personId = jdbcTemplate.queryForObject("""
+                    SELECT identificador
+                    FROM personas
+                    WHERE documento = ?
+                    """, Integer.class, COMPANY_BUYER_DOCUMENT);
+        }
+
+        Integer employeeId = firstEmployeeId();
+        Integer countryId = firstCountryId();
+
+        Integer clientCount = jdbcTemplate.queryForObject("""
+                SELECT COUNT(*)
+                FROM clientes
+                WHERE identificador = ?
+                """, Integer.class, personId);
+        if (clientCount == null || clientCount == 0) {
+            jdbcTemplate.update("""
+                    INSERT INTO clientes (identificador, numeroPais, admitido, categoria, verificador)
+                    VALUES (?, ?, 'si', 'platino', ?)
+                    """, personId, countryId, employeeId);
+        }
+
+        Integer ownerCount = jdbcTemplate.queryForObject("""
+                SELECT COUNT(*)
+                FROM duenios
+                WHERE identificador = ?
+                """, Integer.class, personId);
+        if (ownerCount == null || ownerCount == 0) {
+            jdbcTemplate.update("""
+                    INSERT INTO duenios (
+                        identificador, numeroPais, verificacionFinanciera,
+                        verificacionJudicial, calificacionRiesgo, verificador
+                    )
+                    VALUES (?, ?, 'si', 'si', 1, ?)
+                    """, personId, countryId, employeeId);
+        }
+
+        return personId;
+    }
+
+    private Integer firstEmployeeId() {
+        return jdbcTemplate.queryForObject("""
+                SELECT TOP 1 identificador
+                FROM empleados
+                ORDER BY identificador ASC
+                """, Integer.class);
+    }
+
+    private Integer firstCountryId() {
+        return jdbcTemplate.queryForObject("""
+                SELECT TOP 1 numero
+                FROM paises
+                ORDER BY numero ASC
+                """, Integer.class);
+    }
+
+    private void ensureCompanyPurchaseMessage(
+            Integer ownerId,
+            Integer itemId,
+            Integer productId,
+            String itemTitle,
+            String auctionName,
+            BigDecimal amount
+    ) {
+        Map<String, String> data = new LinkedHashMap<>();
+        data.put("headline", "Sin pujas - Suby compro tu articulo");
+        data.put("product_id", String.valueOf(productId));
+        data.put("product_name", defaultText(itemTitle));
+        data.put("product_code", "LOT-" + String.format("%03d", itemId));
+        data.put("item_id", String.valueOf(itemId));
+        data.put("auction_name", defaultText(auctionName));
+        data.put("sale_amount", formatMoney(amount));
+        data.put("summary", "Tu articulo no recibio ofertas durante la sesion. Conforme a las condiciones de la subasta, Suby compro el lote por %s."
+                .formatted(formatMoney(amount)));
+
+        privateMessageService.createPrivateMessage(
+                ownerId,
+                "aviso_general",
+                "Sin pujas - Suby compro tu articulo",
+                "Tu articulo no recibio ofertas durante la sesion. Conforme a las condiciones de la subasta, Suby compro el lote por %s en %s."
+                        .formatted(formatMoney(amount), defaultText(auctionName)),
+                data
+        );
+    }
+
     private record AuctionSettlementInfo(Integer id, String currency) {
     }
 
@@ -307,6 +477,17 @@ public class AuctionLifecycleService {
             Integer clientId,
             BigDecimal commission,
             BigDecimal basePrice,
+            Integer productId,
+            Integer ownerId,
+            String itemTitle,
+            String auctionName
+    ) {
+    }
+
+    private record UnsoldItemInfo(
+            Integer itemId,
+            BigDecimal basePrice,
+            BigDecimal commission,
             Integer productId,
             Integer ownerId,
             String itemTitle,
