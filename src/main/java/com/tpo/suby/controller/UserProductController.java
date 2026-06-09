@@ -7,6 +7,7 @@ import com.tpo.suby.exception.OwnerProductValidationException;
 import com.tpo.suby.exception.UnauthorizedException;
 import com.tpo.suby.service.UserProductService;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.CacheControl;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -39,6 +40,19 @@ public class UserProductController {
                         .message(products)
                         .build()
         );
+    }
+
+    @GetMapping("/{productId}/photos/{photoId}")
+    public ResponseEntity<byte[]> getOwnerProductPhoto(
+            @PathVariable Integer userId,
+            @PathVariable Integer productId,
+            @PathVariable Integer photoId
+    ) {
+        UserProductService.ProductPhotoBinary photo = userProductService.loadOwnerProductPhoto(userId, productId, photoId);
+        return ResponseEntity.ok()
+                .cacheControl(CacheControl.noCache())
+                .contentType(MediaType.parseMediaType(photo.contentType()))
+                .body(photo.bytes());
     }
 
     @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)

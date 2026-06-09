@@ -9,6 +9,7 @@ import com.tpo.suby.exception.NotFoundException;
 import com.tpo.suby.exception.UnauthorizedException;
 import com.tpo.suby.repository.UsuarioAppRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -22,6 +23,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 
 @Service
 @RequiredArgsConstructor
@@ -69,7 +71,7 @@ public class UserNotificationService {
 
         NotificationRow notification = findNotification(userId, notificationId);
         Map<String, String> data = notification.source() == NotificationSource.PRIVATE_MESSAGE
-                ? privateMessageData(notification.rawId())
+                ? enrichPrivateMessageData(userId, privateMessageData(notification.rawId()))
                 : Map.of();
 
         return UserNotificationDetailResponse.builder()
@@ -246,6 +248,69 @@ public class UserNotificationService {
         return data;
     }
 
+    private Map<String, String> enrichPrivateMessageData(Integer userId, Map<String, String> original) {
+        Map<String, String> data = new LinkedHashMap<>(original);
+
+        Optional<Integer> productId = parseInt(data.get("product_id"));
+        if (productId.isPresent()) {
+            Integer firstPhotoId = firstProductPhotoId(userId, productId.get());
+            if (firstPhotoId != null) {
+                data.putIfAbsent(
+                        "image_url",
+                        "/api/v1/users/%d/products/%d/photos/%d".formatted(userId, productId.get(), firstPhotoId)
+                );
+            }
+
+            ProductInfo productInfo = loadProductInfo(productId.get());
+            if (productInfo != null) {
+                data.putIfAbsent("product_name", productInfo.name());
+                data.putIfAbsent("product_code", "PROD-" + productId.get());
+            }
+        }
+
+        return data;
+    }
+
+    private Integer firstProductPhotoId(Integer userId, Integer productId) {
+        try {
+            return jdbcTemplate.queryForObject("""
+                    SELECT TOP 1 f.identificador
+                    FROM productos p
+                    JOIN fotos f ON f.producto = p.identificador
+                    WHERE p.identificador = ?
+                      AND p.duenio = ?
+                    ORDER BY f.identificador ASC
+                    """, Integer.class, productId, userId);
+        } catch (EmptyResultDataAccessException ex) {
+            return null;
+        }
+    }
+
+    private ProductInfo loadProductInfo(Integer productId) {
+        try {
+            return jdbcTemplate.queryForObject("""
+                    SELECT COALESCE(pd.titulo, p.descripcionCatalogo, p.descripcionCompleta) AS name
+                    FROM productos p
+                    LEFT JOIN productos_detalle pd ON pd.identificador = p.identificador
+                    WHERE p.identificador = ?
+                    """, (rs, rowNum) -> new ProductInfo(rs.getString("name")), productId);
+        } catch (EmptyResultDataAccessException ex) {
+            return null;
+        }
+    }
+
+    private Optional<Integer> parseInt(String value) {
+        if (value == null || value.isBlank()) {
+            return Optional.empty();
+        }
+
+        try {
+            return Optional.of(Integer.parseInt(value.trim()));
+        } catch (NumberFormatException ex) {
+            return Optional.empty();
+        }
+    }
+
     private void validateOwner(Integer userId) {
         if (userId == null || userId <= 0) {
             throw new UnauthorizedException("No autorizado.");
@@ -297,5 +362,8 @@ public class UserNotificationService {
         PRIVATE_MESSAGE,
         PAYMENT,
         FINE
+    }
+
+    private record ProductInfo(String name) {
     }
 }

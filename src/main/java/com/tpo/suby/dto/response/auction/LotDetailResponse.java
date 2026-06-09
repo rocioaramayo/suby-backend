@@ -42,6 +42,8 @@ public class LotDetailResponse {
 
     private String owner;
 
+    private String image;
+
     private List<String> photos;
 
     @JsonProperty("catalog_description")

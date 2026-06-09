@@ -35,4 +35,6 @@ public class HomeAuctionResponse {
 
     @JsonProperty("lot_count")
     private Integer lotCount;
+
+    private String image;
 }

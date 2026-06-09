@@ -36,4 +36,6 @@ public class FeaturedLotResponse {
     private LocalDate auctionDate;
 
     private String status;
+
+    private String image;
 }

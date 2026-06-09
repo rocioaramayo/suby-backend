@@ -23,9 +23,12 @@ import com.tpo.suby.exception.MissingPaymentMethodException;
 import com.tpo.suby.exception.NotFoundException;
 import com.tpo.suby.exception.UnauthorizedException;
 import com.tpo.suby.service.AuctionService;
+import com.tpo.suby.service.AuctionPhotoService;
 import com.tpo.suby.service.BidRoomService;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.CacheControl;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -44,6 +47,7 @@ import java.util.Map;
 public class AuctionController {
 
     private final AuctionService auctionService;
+    private final AuctionPhotoService auctionPhotoService;
     private final BidRoomService bidRoomService;
 
     @GetMapping
@@ -86,6 +90,18 @@ public class AuctionController {
                         .message(lot)
                         .build()
         );
+    }
+
+    @GetMapping("/items/{itemId}/photos/{photoId}")
+    public ResponseEntity<byte[]> getLotPhoto(
+            @PathVariable Integer itemId,
+            @PathVariable Integer photoId
+    ) {
+        AuctionPhotoService.AuctionPhotoBinary photo = auctionPhotoService.loadItemPhoto(itemId, photoId);
+        return ResponseEntity.ok()
+                .cacheControl(CacheControl.noCache())
+                .contentType(MediaType.parseMediaType(photo.getContentType()))
+                .body(photo.getBytes());
     }
 
     @PostMapping("/{auctionId}/attendees")

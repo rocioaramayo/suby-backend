@@ -34,6 +34,7 @@ public class AuctionService {
     private static final int AUCTION_DURATION_MINUTES = 210;
 
     private final JdbcTemplate jdbcTemplate;
+    private final AuctionPhotoService auctionPhotoService;
 
     public AuctionListResponse listAuctions(String category, String status, String search, Integer page, Integer perPage) {
         int safePage = page == null ? 1 : page;
@@ -77,7 +78,8 @@ public class AuctionService {
                     COALESCE(lotes.total_lots, 0) AS total_lots,
                     COALESCE(lotes.sold_lots, 0) AS sold_lots,
                     COALESCE(lotes.active_lots, 0) AS active_lots,
-                    CAST(NULL AS VARCHAR(350)) AS thumbnail_url
+                    thumbnail.item_id AS thumbnail_item_id,
+                    thumbnail.photo_id AS thumbnail_photo_id
                 FROM subastas s
                 LEFT JOIN subastadores sub ON sub.identificador = s.subastador
                 LEFT JOIN personas ps ON ps.identificador = sub.identificador
@@ -96,6 +98,16 @@ public class AuctionService {
                     JOIN itemsCatalogo ic ON ic.catalogo = c.identificador
                     WHERE c.subasta = s.identificador
                 ) lotes
+                OUTER APPLY (
+                    SELECT TOP 1
+                        ic.identificador AS item_id,
+                        f.identificador AS photo_id
+                    FROM catalogos c
+                    JOIN itemsCatalogo ic ON ic.catalogo = c.identificador
+                    JOIN fotos f ON f.producto = ic.producto
+                    WHERE c.subasta = s.identificador
+                    ORDER BY ic.identificador ASC, f.identificador ASC
+                ) thumbnail
                 %s
                 ORDER BY s.fecha ASC, s.hora ASC
                 OFFSET ? ROWS FETCH NEXT ? ROWS ONLY
@@ -118,7 +130,10 @@ public class AuctionService {
                 .totalLots(rs.getInt("total_lots"))
                 .soldLots(rs.getInt("sold_lots"))
                 .activeLots(rs.getInt("active_lots"))
-                .thumbnailUrl(rs.getString("thumbnail_url"))
+                .thumbnailUrl(auctionPhotoService.buildItemPhotoUrl(
+                        nullableInt(rs, "thumbnail_item_id"),
+                        nullableInt(rs, "thumbnail_photo_id")
+                ))
                 .build());
 
         return AuctionListResponse.builder()
@@ -196,12 +211,19 @@ public class AuctionService {
                     p.descripcionCompleta AS title,
                     CAST(NULL AS VARCHAR(250)) AS attribution,
                     owner.nombre AS owner,
-                    ic.precioBase AS base_price
+                    ic.precioBase AS base_price,
+                    thumbnail.photo_id AS thumbnail_photo_id
                 FROM catalogos c
                 JOIN itemsCatalogo ic ON ic.catalogo = c.identificador
                 JOIN productos p ON p.identificador = ic.producto
                 LEFT JOIN duenios d ON d.identificador = p.duenio
                 LEFT JOIN personas owner ON owner.identificador = d.identificador
+                OUTER APPLY (
+                    SELECT TOP 1 f.identificador AS photo_id
+                    FROM fotos f
+                    WHERE f.producto = p.identificador
+                    ORDER BY f.identificador ASC
+                ) thumbnail
                 WHERE c.subasta = ?
                 ORDER BY ic.identificador ASC
                 """, (rs, rowNum) -> AuctionCatalogItemResponse.builder()
@@ -211,6 +233,10 @@ public class AuctionService {
                 .attribution(rs.getString("attribution"))
                 .owner(rs.getString("owner"))
                 .basePrice(rs.getBigDecimal("base_price"))
+                .thumbnailUrl(auctionPhotoService.buildItemPhotoUrl(
+                        rs.getInt("item_id"),
+                        nullableInt(rs, "thumbnail_photo_id")
+                ))
                 .build(), auctionId);
 
         return AuctionDetailResponse.builder()
@@ -254,6 +280,7 @@ public class AuctionService {
                         owner.nombre AS owner,
                         c.descripcion AS catalog_description,
                         p.seguro AS insurance_policy,
+                        thumbnail.photo_id AS thumbnail_photo_id,
                         s.identificador AS auction_id,
                         COALESCE(c.descripcion, CONCAT('Subasta ', s.identificador)) AS auction_name,
                         s.fecha AS auction_date,
@@ -272,6 +299,12 @@ public class AuctionService {
                         FROM pujos pu
                         WHERE pu.item = ic.identificador
                     ) offers
+                    OUTER APPLY (
+                        SELECT TOP 1 f.identificador AS photo_id
+                        FROM fotos f
+                        WHERE f.producto = p.identificador
+                        ORDER BY f.identificador ASC
+                    ) thumbnail
                     WHERE s.identificador = ?
                       AND ic.identificador = ?
                     """, (rs, rowNum) -> LotDetailResponse.builder()
@@ -288,7 +321,11 @@ public class AuctionService {
                     .currentOffer(rs.getBigDecimal("current_offer"))
                     .auctioned(rs.getString("auctioned"))
                     .owner(rs.getString("owner"))
-                    .photos(List.of())
+                    .image(auctionPhotoService.buildItemPhotoUrl(
+                            rs.getInt("item_id"),
+                            nullableInt(rs, "thumbnail_photo_id")
+                    ))
+                    .photos(auctionPhotoService.listItemPhotoUrls(rs.getInt("item_id")))
                     .catalogDescription(rs.getString("catalog_description"))
                     .insurancePolicy(rs.getString("insurance_policy"))
                     .auction(LotAuctionResponse.builder()

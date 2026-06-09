@@ -57,7 +57,10 @@ public class UserProductService {
                     END AS category,
                     p.fecha AS date_registered,
                     CASE
+                        WHEN LOWER(COALESCE(last_request.estado, '')) = 'rechazado' THEN 'rechazado'
                         WHEN ic.identificador IS NOT NULL THEN 'aceptado'
+                        WHEN LOWER(COALESCE(last_request.estado, '')) = 'aceptado' THEN 'aceptado'
+                        WHEN LOWER(COALESCE(last_request.estado, '')) = 'en_revision' THEN 'en_revision'
                         ELSE 'en_inspeccion'
                     END AS inspection_status,
                     COALESCE(p.disponible, 'no') AS available,
@@ -74,6 +77,13 @@ public class UserProductService {
                 LEFT JOIN itemsCatalogo ic ON ic.producto = p.identificador
                 LEFT JOIN catalogos c ON c.identificador = ic.catalogo
                 LEFT JOIN subastas s ON s.identificador = c.subasta
+                OUTER APPLY (
+                    SELECT TOP 1 si.estado
+                    FROM solicitudesIngreso si
+                    WHERE si.duenio = p.duenio
+                      AND si.descripcionBien = COALESCE(pd.titulo, p.descripcionCatalogo, p.descripcionCompleta)
+                    ORDER BY si.fechaSolicitud DESC, si.identificador DESC
+                ) last_request
                 WHERE p.duenio = ?
                 ORDER BY p.identificador DESC
                 """, (rs, rowNum) -> OwnerProductItemResponse.builder()
@@ -176,6 +186,33 @@ public class UserProductService {
                 """, userId, name);
 
         return "Tu artículo fue enviado para revisión. Te notificaremos cuando esté aprobado.";
+    }
+
+    public ProductPhotoBinary loadOwnerProductPhoto(Integer userId, Integer productId, Integer photoId) {
+        validateOwner(userId);
+
+        if (productId == null || productId <= 0 || photoId == null || photoId <= 0) {
+            throw new OwnerProductValidationException("Invalid owner product photo request.");
+        }
+
+        try {
+            byte[] bytes = jdbcTemplate.queryForObject("""
+                    SELECT f.foto
+                    FROM productos p
+                    JOIN fotos f ON f.producto = p.identificador
+                    WHERE p.identificador = ?
+                      AND p.duenio = ?
+                      AND f.identificador = ?
+                    """, byte[].class, productId, userId, photoId);
+
+            if (bytes == null || bytes.length == 0) {
+                throw new OwnerProductValidationException("Invalid owner product photo request.");
+            }
+
+            return new ProductPhotoBinary(bytes, detectContentType(bytes));
+        } catch (EmptyResultDataAccessException ex) {
+            throw new OwnerProductValidationException("Invalid owner product photo request.");
+        }
     }
 
     private Integer insertProduct(
@@ -378,6 +415,40 @@ public class UserProductService {
         return value == null || value.isBlank();
     }
 
+    private String detectContentType(byte[] bytes) {
+        if (bytes.length >= 8
+                && (bytes[0] & 0xFF) == 0x89
+                && bytes[1] == 0x50
+                && bytes[2] == 0x4E
+                && bytes[3] == 0x47) {
+            return "image/png";
+        }
+
+        if (bytes.length >= 3
+                && (bytes[0] & 0xFF) == 0xFF
+                && (bytes[1] & 0xFF) == 0xD8
+                && (bytes[2] & 0xFF) == 0xFF) {
+            return "image/jpeg";
+        }
+
+        if (bytes.length >= 6) {
+            String header = new String(bytes, 0, 6);
+            if ("GIF87a".equals(header) || "GIF89a".equals(header)) {
+                return "image/gif";
+            }
+        }
+
+        if (bytes.length >= 12) {
+            String riff = new String(bytes, 0, 4);
+            String webp = new String(bytes, 8, 4);
+            if ("RIFF".equals(riff) && "WEBP".equals(webp)) {
+                return "image/webp";
+            }
+        }
+
+        return "application/octet-stream";
+    }
+
     private String inferArtCategory(String name, String description) {
         String combined = ((name == null ? "" : name) + " " + (description == null ? "" : description))
                 .toLowerCase(Locale.ROOT);
@@ -399,5 +470,8 @@ public class UserProductService {
             String swift,
             String iban
     ) {
+    }
+
+    public record ProductPhotoBinary(byte[] bytes, String contentType) {
     }
 }
