@@ -10,4 +10,7 @@ public class WonItemPaymentRequest {
 
     @JsonProperty("payment_method_id")
     private Integer paymentMethodId;
+
+    @JsonProperty("retiro_presencial")
+    private Boolean retiroPresencial;
 }

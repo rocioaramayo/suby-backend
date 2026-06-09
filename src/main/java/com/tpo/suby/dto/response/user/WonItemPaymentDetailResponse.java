@@ -21,10 +21,21 @@ public class WonItemPaymentDetailResponse {
 
     private String title;
 
+    @JsonProperty("auction_name")
+    private String auctionName;
+
+    private String currency;
+
     @JsonProperty("winning_bid")
     private BigDecimal winningBid;
 
     private BigDecimal commission;
+
+    @JsonProperty("shipping_amount")
+    private BigDecimal shippingAmount;
+
+    @JsonProperty("pickup_amount")
+    private BigDecimal pickupAmount;
 
     @JsonProperty("total_to_pay")
     private BigDecimal totalToPay;

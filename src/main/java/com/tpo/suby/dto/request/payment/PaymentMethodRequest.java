@@ -13,6 +13,11 @@ public class PaymentMethodRequest {
 
     private String type;
 
+    private String currency;
+
+    @JsonProperty("auction_id")
+    private Integer auctionId;
+
     @JsonProperty("card_number")
     private String cardNumber;
 
@@ -50,4 +55,7 @@ public class PaymentMethodRequest {
 
     @JsonProperty("holder_name")
     private String holderName;
+
+    @JsonProperty("is_foreign_bank")
+    private Boolean foreignBank;
 }

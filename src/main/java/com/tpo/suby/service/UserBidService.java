@@ -1,6 +1,7 @@
 package com.tpo.suby.service;
 
 import com.tpo.suby.dto.request.user.WonItemPaymentRequest;
+import com.tpo.suby.dto.response.payment.PaymentMethodItemResponse;
 import com.tpo.suby.dto.response.user.UserBidHistoryItemResponse;
 import com.tpo.suby.dto.response.user.UserBidHistoryResponse;
 import com.tpo.suby.dto.response.user.WonBidAuctionResponse;
@@ -9,7 +10,6 @@ import com.tpo.suby.dto.response.user.WonBidItemResponse;
 import com.tpo.suby.dto.response.user.WonBidResultResponse;
 import com.tpo.suby.dto.response.user.WonBidTimelineItemResponse;
 import com.tpo.suby.dto.response.user.WonItemPaymentDetailResponse;
-import com.tpo.suby.dto.response.payment.PaymentMethodItemResponse;
 import com.tpo.suby.entity.UsuarioApp;
 import com.tpo.suby.exception.InsufficientPaymentMethodBalanceException;
 import com.tpo.suby.exception.UnauthorizedException;
@@ -43,6 +43,8 @@ import java.util.Map;
 @Service
 @RequiredArgsConstructor
 public class UserBidService {
+
+    private static final BigDecimal ESTIMATED_SHIPPING_AMOUNT = new BigDecimal("150.00");
 
     private final JdbcTemplate jdbcTemplate;
     private final UsuarioAppRepository usuarioAppRepository;
@@ -138,31 +140,36 @@ public class UserBidService {
         validateOwner(userId);
 
         if (itemId == null || itemId <= 0) {
-            throw new WonItemPaymentNotFoundException("Artículo no encontrado o no adjudicado a tu cuenta.");
+            throw new WonItemPaymentNotFoundException("Articulo no encontrado o no adjudicado a tu cuenta.");
         }
 
         WonBidCore wonBid;
         try {
             wonBid = wonBidCore(userId, itemId);
         } catch (WonBidDetailNotFoundException ex) {
-            throw new WonItemPaymentNotFoundException("Artículo no encontrado o no adjudicado a tu cuenta.");
+            throw new WonItemPaymentNotFoundException("Articulo no encontrado o no adjudicado a tu cuenta.");
         }
         if (!"si".equalsIgnoreCase(wonBid.winner())) {
-            throw new WonItemPaymentNotFoundException("Artículo no encontrado o no adjudicado a tu cuenta.");
+            throw new WonItemPaymentNotFoundException("Articulo no encontrado o no adjudicado a tu cuenta.");
         }
 
         BigDecimal commissionPct = commissionPercentage(wonBid.commission(), wonBid.basePrice());
         BigDecimal commissionAmount = wonBid.winningBid()
                 .multiply(commissionPct)
                 .divide(new BigDecimal("100"), 2, RoundingMode.HALF_UP);
+        BigDecimal shippingAmount = ESTIMATED_SHIPPING_AMOUNT;
 
         return WonItemPaymentDetailResponse.builder()
                 .itemId(wonBid.itemId())
                 .lotCode(wonBid.lotCode())
                 .title(wonBid.title())
+                .auctionName(wonBid.auctionName())
+                .currency(wonBid.auctionCurrency())
                 .winningBid(wonBid.winningBid())
                 .commission(commissionAmount)
-                .totalToPay(wonBid.winningBid().add(commissionAmount))
+                .shippingAmount(shippingAmount)
+                .pickupAmount(BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP))
+                .totalToPay(wonBid.winningBid().add(commissionAmount).add(shippingAmount))
                 .estimatedPaymentDate(wonBid.auctionDate().plusDays(6))
                 .paymentMethods(paymentMethods(userId))
                 .build();
@@ -173,45 +180,49 @@ public class UserBidService {
         validateOwner(userId);
 
         if (itemId == null || itemId <= 0 || request == null || request.getPaymentMethodId() == null) {
-            throw new WonItemPaymentNotFoundException("Artículo no encontrado o no adjudicado a tu cuenta.");
+            throw new WonItemPaymentNotFoundException("Articulo no encontrado o no adjudicado a tu cuenta.");
         }
 
         WonBidCore wonBid;
         try {
             wonBid = wonBidCore(userId, itemId);
         } catch (WonBidDetailNotFoundException ex) {
-            throw new WonItemPaymentNotFoundException("Artículo no encontrado o no adjudicado a tu cuenta.");
+            throw new WonItemPaymentNotFoundException("Articulo no encontrado o no adjudicado a tu cuenta.");
         }
         if (!"si".equalsIgnoreCase(wonBid.winner())) {
-            throw new WonItemPaymentNotFoundException("Artículo no encontrado o no adjudicado a tu cuenta.");
+            throw new WonItemPaymentNotFoundException("Articulo no encontrado o no adjudicado a tu cuenta.");
         }
 
         BigDecimal commissionPct = commissionPercentage(wonBid.commission(), wonBid.basePrice());
         BigDecimal commissionAmount = wonBid.winningBid()
                 .multiply(commissionPct)
                 .divide(new BigDecimal("100"), 2, RoundingMode.HALF_UP);
-        BigDecimal totalToPay = wonBid.winningBid().add(commissionAmount);
+        boolean retiroPresencial = Boolean.TRUE.equals(request.getRetiroPresencial());
+        BigDecimal shippingAmount = retiroPresencial
+                ? BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP)
+                : ESTIMATED_SHIPPING_AMOUNT;
+        BigDecimal totalToPay = wonBid.winningBid().add(commissionAmount).add(shippingAmount);
 
-        PaymentMethodState paymentMethod = paymentMethodState(userId, request.getPaymentMethodId());
-        if (paymentMethod.availableBalance().compareTo(totalToPay) < 0) {
+        PaymentMethodState paymentMethod = paymentMethodState(userId, request.getPaymentMethodId(), wonBid.auctionId());
+        if (!paymentMethod.canCover(totalToPay, wonBid.auctionCurrency())) {
             throw new InsufficientPaymentMethodBalanceException("Saldo insuficiente en el medio de pago seleccionado.");
         }
 
         Integer registroId = ensureRegistroSubasta(userId, wonBid, commissionAmount);
         ensureNotPaid(registroId, userId);
-        insertPago(userId, registroId, request.getPaymentMethodId(), totalToPay);
-        reservePaymentMethodAmount(request.getPaymentMethodId(), totalToPay);
+        insertPago(userId, registroId, request.getPaymentMethodId(), totalToPay, wonBid.auctionCurrency(), retiroPresencial);
+        reservePaymentMethodAmount(paymentMethod, totalToPay);
         privateMessageService.createPrivateMessage(
                 userId,
                 "pago_confirmado",
                 "Pago confirmado",
-                "Se confirmó el pago de %s por %s en %s."
+                "Se confirmo el pago de %s por %s en %s."
                         .formatted(formatMoney(totalToPay), defaultText(wonBid.title()), defaultText(wonBid.auctionName())),
-                paymentConfirmedMessageData(userId, wonBid, commissionPct, commissionAmount, totalToPay)
+                paymentConfirmedMessageData(userId, wonBid, commissionPct, commissionAmount, shippingAmount, totalToPay, retiroPresencial)
         );
         userCategoryService.refreshCategory(userId);
 
-        return "Pago confirmado. Recibirás la confirmación por email.";
+        return "Pago confirmado. Recibiras la confirmacion por email.";
     }
 
     private WonBidCore wonBidCore(Integer userId, Integer itemId) {
@@ -231,6 +242,7 @@ public class UserBidService {
                         s.ubicacion AS auction_location,
                         auctioneer_person.nombre AS auctioneer,
                         p.identificador AS product_id,
+                        COALESCE(se.moneda, 'ARS') AS currency,
                         winning_bid.importe AS winning_bid,
                         winning_bid.ganador AS winner,
                         ic.comision AS commission,
@@ -245,6 +257,7 @@ public class UserBidService {
                     LEFT JOIN personas owner ON owner.identificador = d.identificador
                     LEFT JOIN subastadores sub ON sub.identificador = s.subastador
                     LEFT JOIN personas auctioneer_person ON auctioneer_person.identificador = sub.identificador
+                    LEFT JOIN subastas_ext se ON se.identificador = s.identificador
                     WHERE my_attendee.cliente = ?
                       AND ic.identificador = ?
                     ORDER BY
@@ -265,6 +278,7 @@ public class UserBidService {
                     rs.getString("auction_location"),
                     rs.getString("auctioneer"),
                     rs.getInt("product_id"),
+                    rs.getString("currency"),
                     rs.getBigDecimal("winning_bid"),
                     rs.getString("winner"),
                     rs.getBigDecimal("commission"),
@@ -310,7 +324,7 @@ public class UserBidService {
                     TimelineRow row = rows.get(index);
                     String bidderLabel = "Postor %02d".formatted(row.bidderNumber());
                     if (row.bidderClientId().equals(userId)) {
-                        bidderLabel += " (Tú)";
+                        bidderLabel += " (Tu)";
                     }
                     return WonBidTimelineItemResponse.builder()
                             .bidNumber(index + 1)
@@ -370,22 +384,35 @@ public class UserBidService {
         }, userId);
     }
 
-    private PaymentMethodState paymentMethodState(Integer userId, Integer paymentMethodId) {
+    private PaymentMethodState paymentMethodState(Integer userId, Integer paymentMethodId, Integer auctionId) {
         try {
             return jdbcTemplate.queryForObject("""
                     SELECT
                         mdp.identificador AS id,
+                        mdp.tipo AS payment_type,
+                        mdp.estado AS payment_status,
+                        mdp.moneda AS payment_currency,
                         COALESCE(mdp.montoDisponible, 0) AS available_balance,
-                        COALESCE(mdp.montoUsado, 0) AS used_balance
+                        COALESCE(mdp.montoUsado, 0) AS used_balance,
+                        COALESCE(tc.esInternacional, 'no') AS international_card,
+                        cc.subasta AS check_auction_id
                     FROM mediosDePago mdp
+                    LEFT JOIN tarjetasCredito tc ON tc.identificador = mdp.identificador
+                    LEFT JOIN chequesCertificados cc ON cc.identificador = mdp.identificador
                     WHERE mdp.identificador = ?
                       AND mdp.cliente = ?
                     """, (rs, rowNum) -> new PaymentMethodState(
                     rs.getInt("id"),
-                    rs.getBigDecimal("available_balance").subtract(rs.getBigDecimal("used_balance"))
+                    rs.getString("payment_type"),
+                    rs.getString("payment_status"),
+                    rs.getString("payment_currency"),
+                    rs.getBigDecimal("available_balance").subtract(rs.getBigDecimal("used_balance")),
+                    "si".equalsIgnoreCase(rs.getString("international_card")),
+                    nullableInt(rs, "check_auction_id"),
+                    auctionId
             ), paymentMethodId, userId);
         } catch (EmptyResultDataAccessException ex) {
-            throw new WonItemPaymentNotFoundException("Artículo no encontrado o no adjudicado a tu cuenta.");
+            throw new WonItemPaymentNotFoundException("Articulo no encontrado o no adjudicado a tu cuenta.");
         }
     }
 
@@ -419,7 +446,7 @@ public class UserBidService {
 
             Number key = keyHolder.getKey();
             if (key == null) {
-                throw new WonItemPaymentNotFoundException("Artículo no encontrado o no adjudicado a tu cuenta.");
+                throw new WonItemPaymentNotFoundException("Articulo no encontrado o no adjudicado a tu cuenta.");
             }
             return key.intValue();
         }
@@ -435,27 +462,37 @@ public class UserBidService {
                 """, Integer.class, registroId, userId);
 
         if (count != null && count > 0) {
-            throw new WonItemAlreadyPaidException("Este artículo ya fue pagado.");
+            throw new WonItemAlreadyPaidException("Este articulo ya fue pagado.");
         }
     }
 
-    private void insertPago(Integer userId, Integer registroId, Integer paymentMethodId, BigDecimal totalToPay) {
+    private void insertPago(
+            Integer userId,
+            Integer registroId,
+            Integer paymentMethodId,
+            BigDecimal totalToPay,
+            String currency,
+            boolean retiroPresencial
+    ) {
         jdbcTemplate.update("""
                 INSERT INTO pagos (
                     cliente, registroSubasta, medioPago, importe, moneda,
                     estado, fechaConfirmacion, retiroPresencial, referenciaExterna
                 )
                 VALUES (?, ?, ?, ?, ?, ?, GETDATE(), ?, ?)
-                """, userId, registroId, paymentMethodId, totalToPay, "ARS", "confirmado", "no",
+                """, userId, registroId, paymentMethodId, totalToPay, currency, "confirmado", retiroPresencial ? "si" : "no",
                 "SUBY-PAY-" + registroId + "-" + paymentMethodId);
     }
 
-    private void reservePaymentMethodAmount(Integer paymentMethodId, BigDecimal totalToPay) {
+    private void reservePaymentMethodAmount(PaymentMethodState paymentMethod, BigDecimal totalToPay) {
+        if ("tarjeta_credito".equals(paymentMethod.type())) {
+            return;
+        }
         jdbcTemplate.update("""
                 UPDATE mediosDePago
                 SET montoUsado = COALESCE(montoUsado, 0) + ?
                 WHERE identificador = ?
-                """, totalToPay, paymentMethodId);
+                """, totalToPay, paymentMethod.id());
     }
 
     private void validateOwner(Integer userId) {
@@ -475,6 +512,11 @@ public class UserBidService {
         if (!user.getIdentificador().equals(userId)) {
             throw new UnauthorizedException("No autorizado.");
         }
+    }
+
+    private Integer nullableInt(java.sql.ResultSet rs, String column) throws java.sql.SQLException {
+        int value = rs.getInt(column);
+        return rs.wasNull() ? null : value;
     }
 
     private LocalDate toLocalDate(Date date) {
@@ -534,7 +576,7 @@ public class UserBidService {
     }
 
     private String defaultText(String value) {
-        return value == null || value.isBlank() ? "tu operación" : value;
+        return value == null || value.isBlank() ? "tu operacion" : value;
     }
 
     private Map<String, String> paymentConfirmedMessageData(
@@ -542,10 +584,12 @@ public class UserBidService {
             WonBidCore wonBid,
             BigDecimal commissionPct,
             BigDecimal commissionAmount,
-            BigDecimal totalToPay
+            BigDecimal shippingAmount,
+            BigDecimal totalToPay,
+            boolean retiroPresencial
     ) {
         Map<String, String> data = new LinkedHashMap<>();
-        data.put("headline", "Información de pago — Subasta Ganada");
+        data.put("headline", "Informacion de pago - Subasta Ganada");
         data.put("item_id", String.valueOf(wonBid.itemId()));
         data.put("auction_id", String.valueOf(wonBid.auctionId()));
         data.put("lot_code", defaultText(wonBid.lotCode()));
@@ -554,8 +598,10 @@ public class UserBidService {
         data.put("winning_bid", formatMoney(wonBid.winningBid()));
         data.put("commission_pct", commissionPct.setScale(2, RoundingMode.HALF_UP).toPlainString());
         data.put("commission_amount", formatMoney(commissionAmount));
-        data.put("shipping_amount", formatMoney(BigDecimal.ZERO));
+        data.put("shipping_amount", formatMoney(shippingAmount));
         data.put("total_to_pay", formatMoney(totalToPay));
+        data.put("currency", wonBid.auctionCurrency());
+        data.put("pickup_selected", retiroPresencial ? "si" : "no");
         data.put("status", "confirmado");
         data.put("cta_label", "Ver compra");
         data.put("cta_target", "/users/%s/won-items/%s/payment".formatted(userId, wonBid.itemId()));
@@ -576,6 +622,7 @@ public class UserBidService {
             String location,
             String auctioneer,
             Integer productId,
+            String auctionCurrency,
             BigDecimal winningBid,
             String winner,
             BigDecimal commission,
@@ -593,7 +640,31 @@ public class UserBidService {
 
     private record PaymentMethodState(
             Integer id,
-            BigDecimal availableBalance
+            String type,
+            String status,
+            String currency,
+            BigDecimal availableBalance,
+            boolean internationalCard,
+            Integer checkAuctionId,
+            Integer requestedAuctionId
     ) {
+        boolean canCover(BigDecimal totalToPay, String auctionCurrency) {
+            if (!"verificado".equalsIgnoreCase(status)) {
+                return false;
+            }
+            if ("tarjeta_credito".equals(type)) {
+                return "ARS".equalsIgnoreCase(auctionCurrency) || internationalCard;
+            }
+            if (!auctionCurrency.equalsIgnoreCase(currency)) {
+                return false;
+            }
+            if ("cheque_certificado".equals(type)
+                    && checkAuctionId != null
+                    && requestedAuctionId != null
+                    && !checkAuctionId.equals(requestedAuctionId)) {
+                return false;
+            }
+            return availableBalance.compareTo(totalToPay) >= 0;
+        }
     }
 }

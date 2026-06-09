@@ -31,6 +31,7 @@ public class UserNotificationService {
 
     private static final int PAYMENT_NOTIFICATION_OFFSET = 1_000_000;
     private static final int FINE_NOTIFICATION_OFFSET = 2_000_000;
+    private static final int PAYMENT_REMINDER_DELAY_MINUTES = 30;
 
     private final JdbcTemplate jdbcTemplate;
     private final UsuarioAppRepository usuarioAppRepository;
@@ -70,9 +71,11 @@ public class UserNotificationService {
         validateOwner(userId);
 
         NotificationRow notification = findNotification(userId, notificationId);
-        Map<String, String> data = notification.source() == NotificationSource.PRIVATE_MESSAGE
-                ? enrichPrivateMessageData(userId, privateMessageData(notification.rawId()))
-                : Map.of();
+        Map<String, String> data = switch (notification.source()) {
+            case PRIVATE_MESSAGE -> enrichPrivateMessageData(userId, privateMessageData(notification.rawId()));
+            case PAYMENT -> paymentNotificationData(userId, notification.rawId());
+            case FINE -> fineNotificationData(userId, notification.rawId());
+        };
 
         return UserNotificationDetailResponse.builder()
                 .id(notification.id())
@@ -166,6 +169,14 @@ public class UserNotificationService {
                 LEFT JOIN subastas s ON s.identificador = rs.subasta
                 LEFT JOIN catalogos c ON c.subasta = s.identificador
                 WHERE np.cliente = ?
+                  AND np.fechaEnvio <= DATEADD(MINUTE, -?, GETDATE())
+                  AND NOT EXISTS (
+                        SELECT 1
+                        FROM pagos pg
+                        WHERE pg.registroSubasta = np.registro
+                          AND pg.cliente = np.cliente
+                          AND pg.estado IN ('pendiente', 'procesando', 'confirmado')
+                  )
                 """, (rs, rowNum) -> {
             String itemTitle = rs.getString("item_title");
             String auctionName = rs.getString("auction_name");
@@ -182,7 +193,7 @@ public class UserNotificationService {
                     NotificationSource.PAYMENT,
                     rs.getInt("id")
             );
-        }, userId);
+        }, userId, PAYMENT_REMINDER_DELAY_MINUTES);
     }
 
     private List<NotificationRow> fineNotifications(Integer userId) {
@@ -245,6 +256,63 @@ public class UserNotificationService {
         for (Map.Entry<String, String> row : rows) {
             data.put(row.getKey(), row.getValue());
         }
+        return data;
+    }
+
+    private Map<String, String> paymentNotificationData(Integer userId, Integer notificationId) {
+        return jdbcTemplate.queryForObject("""
+                SELECT
+                    rs.producto AS product_id,
+                    COALESCE(pd.titulo, p.descripcionCatalogo, p.descripcionCompleta) AS product_name,
+                    CONCAT('LOT-', RIGHT(CONCAT('000', ic.identificador), 3)) AS lot_code,
+                    COALESCE(c.descripcion, CONCAT('Subasta ', s.identificador)) AS auction_name,
+                    np.importePujado AS winning_bid,
+                    np.comision AS commission_amount,
+                    np.costoEnvio AS shipping_amount,
+                    np.importeTotal AS total_to_pay,
+                    COALESCE(se.moneda, 'ARS') AS currency,
+                    (
+                        SELECT TOP 1 f.identificador
+                        FROM fotos f
+                        WHERE f.producto = p.identificador
+                        ORDER BY f.identificador ASC
+                    ) AS first_photo_id
+                FROM notificacionesPago np
+                JOIN registroDeSubasta rs ON rs.identificador = np.registro
+                JOIN productos p ON p.identificador = rs.producto
+                LEFT JOIN productos_detalle pd ON pd.identificador = p.identificador
+                LEFT JOIN subastas s ON s.identificador = rs.subasta
+                LEFT JOIN subastas_ext se ON se.identificador = s.identificador
+                LEFT JOIN catalogos c ON c.subasta = s.identificador
+                LEFT JOIN itemsCatalogo ic ON ic.producto = p.identificador
+                WHERE np.identificador = ?
+                  AND np.cliente = ?
+                """, (rs, rowNum) -> {
+            Map<String, String> data = new LinkedHashMap<>();
+            data.put("headline", "Informacion de pago - Subasta Ganada");
+            data.put("item_id", String.valueOf(rs.getInt("product_id")));
+            data.put("lot_code", rs.getString("lot_code"));
+            data.put("item_title", rs.getString("product_name"));
+            data.put("auction_name", rs.getString("auction_name"));
+            data.put("winning_bid", formatMoney(rs.getBigDecimal("winning_bid")));
+            data.put("commission_amount", formatMoney(rs.getBigDecimal("commission_amount")));
+            data.put("shipping_amount", formatMoney(rs.getBigDecimal("shipping_amount")));
+            data.put("total_to_pay", formatMoney(rs.getBigDecimal("total_to_pay")));
+            data.put("currency", rs.getString("currency"));
+            Integer photoId = rs.getInt("first_photo_id");
+            if (!rs.wasNull()) {
+                data.put("image_url", "/api/v1/users/%d/products/%d/photos/%d".formatted(userId, rs.getInt("product_id"), photoId));
+            }
+            data.put("cta_label", "Ir a pagar");
+            data.put("cta_target", "/won-items/%s/payment".formatted(rs.getInt("product_id")));
+            return data;
+        }, notificationId, userId);
+    }
+
+    private Map<String, String> fineNotificationData(Integer userId, Integer fineId) {
+        Map<String, String> data = new LinkedHashMap<>();
+        data.put("fine_id", String.valueOf(fineId));
+        data.put("user_id", String.valueOf(userId));
         return data;
     }
 

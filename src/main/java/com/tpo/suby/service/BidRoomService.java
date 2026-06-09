@@ -2,12 +2,13 @@ package com.tpo.suby.service;
 
 import com.tpo.suby.dto.request.bid.BidRequest;
 import com.tpo.suby.dto.response.bid.AttendeeRegistrationResponse;
-import com.tpo.suby.dto.response.bid.BidResultResponse;
 import com.tpo.suby.dto.response.bid.BidResponse;
+import com.tpo.suby.dto.response.bid.BidResultResponse;
 import com.tpo.suby.dto.response.bid.LiveBidStatusResponse;
 import com.tpo.suby.dto.response.bid.WinnerResponse;
 import com.tpo.suby.entity.UsuarioApp;
 import com.tpo.suby.exception.AdjudicatedLotException;
+import com.tpo.suby.exception.AuctionAccessDeniedException;
 import com.tpo.suby.exception.AuctionRoomAccessException;
 import com.tpo.suby.exception.BidRestrictedException;
 import com.tpo.suby.exception.BidResultNotFoundException;
@@ -29,11 +30,11 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.sql.Date;
+import java.sql.PreparedStatement;
+import java.sql.Statement;
 import java.sql.Time;
 import java.text.DecimalFormat;
 import java.text.DecimalFormatSymbols;
-import java.sql.PreparedStatement;
-import java.sql.Statement;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
@@ -63,28 +64,34 @@ public class BidRoomService {
             throw new AuctionRoomAccessException("No access to auction room.");
         }
 
+        ensureSingleActiveAuctionSession(user.getIdentificador(), auction.id());
+
         if (categoryRank(auction.category()) > categoryRank(client.category())) {
+            upsertActiveSession(user.getIdentificador(), auction.id());
             return observerAccess(
                     auctionId,
                     client.id(),
-                    "Tu categoría actual no habilita la puja en esta subasta. Podés ingresar como observador."
+                    "Tu categoria actual no habilita la puja en esta subasta. Podes ingresar como observador."
             );
         }
 
-        if (!hasPaymentMethod(client.id())) {
+        if (!hasVerifiedPaymentMethod(client.id(), auction.id(), auction.currency())) {
+            upsertActiveSession(user.getIdentificador(), auction.id());
             return observerAccess(
                     auctionId,
                     client.id(),
-                    "Necesitás registrar un medio de pago para pujar. Podés ingresar como observador."
+                    "Necesitas registrar un medio de pago verificado para pujar. Podes ingresar como observador."
             );
         }
 
         if (attendeeExists(auctionId, client.id())) {
+            upsertActiveSession(user.getIdentificador(), auction.id());
             return existingAttendee(auctionId, client.id());
         }
 
         Integer bidderNumber = nextBidderNumber(auctionId);
         Integer attendeeId = insertAttendee(auctionId, client.id(), bidderNumber);
+        upsertActiveSession(user.getIdentificador(), auction.id());
 
         return AttendeeRegistrationResponse.builder()
                 .attendeeId(attendeeId)
@@ -108,11 +115,13 @@ public class BidRoomService {
 
         UsuarioApp user = authenticatedUser();
         ClientInfo client = clientInfo(user.getIdentificador());
+        AuctionInfo auction = auctionInfo(auctionId);
 
         if (hasBidRestrictions(user, client.id())) {
             throw new BidRestrictedException("Bid restricted.");
         }
 
+        ensureSingleActiveAuctionSession(user.getIdentificador(), auction.id());
         AttendeeInfo attendee = attendeeInfo(request.getAttendeeId(), auctionId, client.id());
         LotBidInfo lot = lotBidInfo(auctionId, itemId);
 
@@ -133,7 +142,7 @@ public class BidRoomService {
             throw invalidAmount(minimum, maximum);
         }
 
-        if (availableBalance(client.id()).compareTo(amount) < 0) {
+        if (!hasEligibleFundingSource(client.id(), auction.id(), auction.currency(), amount)) {
             throw new InsufficientBalanceException("Insufficient balance.");
         }
 
@@ -313,11 +322,11 @@ public class BidRoomService {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
         if (authentication == null || !authentication.isAuthenticated()
                 || "anonymousUser".equals(authentication.getPrincipal())) {
-            throw new UnauthorizedException("Debes iniciar sesión para ingresar a la sala de puja.");
+            throw new UnauthorizedException("Debes iniciar sesion para ingresar a la sala de puja.");
         }
 
         return usuarioAppRepository.findByEmail(authentication.getName())
-                .orElseThrow(() -> new UnauthorizedException("Debes iniciar sesión para ingresar a la sala de puja."));
+                .orElseThrow(() -> new UnauthorizedException("Debes iniciar sesion para ingresar a la sala de puja."));
     }
 
     private ClientInfo clientInfo(Integer userId) {
@@ -339,12 +348,23 @@ public class BidRoomService {
     private AuctionInfo auctionInfo(Integer auctionId) {
         try {
             return jdbcTemplate.queryForObject("""
-                    SELECT identificador, categoria
-                    FROM subastas
-                    WHERE identificador = ?
+                    SELECT
+                        s.identificador,
+                        s.categoria,
+                        COALESCE(se.moneda, 'ARS') AS currency,
+                        s.fecha,
+                        s.hora,
+                        s.estado
+                    FROM subastas s
+                    LEFT JOIN subastas_ext se ON se.identificador = s.identificador
+                    WHERE s.identificador = ?
                     """, (rs, rowNum) -> new AuctionInfo(
                     rs.getInt("identificador"),
-                    rs.getString("categoria")
+                    rs.getString("categoria"),
+                    rs.getString("currency"),
+                    toLocalDate(rs.getDate("fecha")),
+                    toLocalTime(rs.getTime("hora")),
+                    rs.getString("estado")
             ), auctionId);
         } catch (EmptyResultDataAccessException ex) {
             throw new NotFoundException("Subasta no encontrada.");
@@ -402,12 +422,32 @@ public class BidRoomService {
         return count != null && count > 0;
     }
 
-    private boolean hasPaymentMethod(Integer clientId) {
+    private boolean hasVerifiedPaymentMethod(Integer clientId, Integer auctionId, String auctionCurrency) {
         Integer count = jdbcTemplate.queryForObject("""
                 SELECT COUNT(*)
-                FROM mediosDePago
-                WHERE cliente = ?
-                """, Integer.class, clientId);
+                FROM mediosDePago mdp
+                LEFT JOIN tarjetasCredito tc ON tc.identificador = mdp.identificador
+                LEFT JOIN chequesCertificados cc ON cc.identificador = mdp.identificador
+                WHERE mdp.cliente = ?
+                  AND mdp.estado = 'verificado'
+                  AND (
+                        mdp.tipo = 'tarjeta_credito'
+                        OR (
+                            mdp.tipo = 'cuenta_bancaria'
+                            AND mdp.moneda = ?
+                        )
+                        OR (
+                            mdp.tipo = 'cheque_certificado'
+                            AND mdp.moneda = ?
+                            AND (cc.subasta IS NULL OR cc.subasta = ?)
+                        )
+                  )
+                  AND (
+                        ? = 'ARS'
+                        OR mdp.tipo <> 'tarjeta_credito'
+                        OR COALESCE(tc.esInternacional, 'no') = 'si'
+                  )
+                """, Integer.class, clientId, auctionCurrency, auctionCurrency, auctionId, auctionCurrency);
         return count != null && count > 0;
     }
 
@@ -434,14 +474,106 @@ public class BidRoomService {
         return latest == null ? basePrice : latest;
     }
 
-    private BigDecimal availableBalance(Integer clientId) {
-        BigDecimal balance = jdbcTemplate.queryForObject("""
-                SELECT COALESCE(SUM(COALESCE(montoDisponible, 0) - COALESCE(montoUsado, 0)), 0)
-                FROM mediosDePago
-                WHERE cliente = ?
-                  AND estado IN ('pendiente', 'verificado')
-                """, BigDecimal.class, clientId);
-        return balance == null ? BigDecimal.ZERO : balance;
+    private boolean hasEligibleFundingSource(Integer clientId, Integer auctionId, String auctionCurrency, BigDecimal amount) {
+        Integer compatibleCardCount = jdbcTemplate.queryForObject("""
+                SELECT COUNT(*)
+                FROM mediosDePago mdp
+                LEFT JOIN tarjetasCredito tc ON tc.identificador = mdp.identificador
+                WHERE mdp.cliente = ?
+                  AND mdp.estado = 'verificado'
+                  AND mdp.tipo = 'tarjeta_credito'
+                  AND (
+                        ? = 'ARS'
+                        OR COALESCE(tc.esInternacional, 'no') = 'si'
+                  )
+                """, Integer.class, clientId, auctionCurrency);
+        if (compatibleCardCount != null && compatibleCardCount > 0) {
+            return true;
+        }
+
+        Integer fundedMethods = jdbcTemplate.queryForObject("""
+                SELECT COUNT(*)
+                FROM mediosDePago mdp
+                LEFT JOIN chequesCertificados cc ON cc.identificador = mdp.identificador
+                WHERE mdp.cliente = ?
+                  AND mdp.estado = 'verificado'
+                  AND mdp.tipo IN ('cuenta_bancaria', 'cheque_certificado')
+                  AND mdp.moneda = ?
+                  AND (
+                        mdp.tipo <> 'cheque_certificado'
+                        OR cc.subasta IS NULL
+                        OR cc.subasta = ?
+                  )
+                  AND COALESCE(mdp.montoDisponible, 0) - COALESCE(mdp.montoUsado, 0) >= ?
+                """, Integer.class, clientId, auctionCurrency, auctionId, amount);
+        return fundedMethods != null && fundedMethods > 0;
+    }
+
+    private ActiveSessionInfo activeSession(Integer userId) {
+        try {
+            return jdbcTemplate.queryForObject("""
+                    SELECT
+                        su.subastaActiva AS auction_id,
+                        s.fecha AS auction_date,
+                        s.hora AS auction_hour,
+                        s.estado AS auction_state
+                    FROM sesiones_usuario su
+                    LEFT JOIN subastas s ON s.identificador = su.subastaActiva
+                    WHERE su.persona = ?
+                    """, (rs, rowNum) -> new ActiveSessionInfo(
+                    nullableInt(rs, "auction_id"),
+                    toLocalDate(rs.getDate("auction_date")),
+                    toLocalTime(rs.getTime("auction_hour")),
+                    rs.getString("auction_state")
+            ), userId);
+        } catch (EmptyResultDataAccessException ex) {
+            return null;
+        }
+    }
+
+    private void ensureSingleActiveAuctionSession(Integer userId, Integer auctionId) {
+        ActiveSessionInfo activeSession = activeSession(userId);
+        if (activeSession == null || activeSession.auctionId() == null || activeSession.auctionId().equals(auctionId)) {
+            return;
+        }
+        if (isAuctionFinished(activeSession.auctionDate(), activeSession.auctionHour(), activeSession.auctionState())) {
+            clearActiveSession(userId);
+            return;
+        }
+        throw new AuctionAccessDeniedException("No podes estar conectado a dos subastas al mismo tiempo.");
+    }
+
+    private void upsertActiveSession(Integer userId, Integer auctionId) {
+        Integer count = jdbcTemplate.queryForObject("""
+                SELECT COUNT(*)
+                FROM sesiones_usuario
+                WHERE persona = ?
+                """, Integer.class, userId);
+
+        if (count != null && count > 0) {
+            jdbcTemplate.update("""
+                    UPDATE sesiones_usuario
+                    SET subastaActiva = ?,
+                        conectadoEn = GETDATE()
+                    WHERE persona = ?
+                    """, auctionId, userId);
+            return;
+        }
+
+        jdbcTemplate.update("""
+                INSERT INTO sesiones_usuario (
+                    persona, subastaActiva, conectadoEn, tokenSesion, expira
+                )
+                VALUES (?, ?, GETDATE(), ?, DATEADD(HOUR, 4, GETDATE()))
+                """, userId, auctionId, "auction-session-" + userId + "-" + auctionId);
+    }
+
+    private void clearActiveSession(Integer userId) {
+        jdbcTemplate.update("""
+                UPDATE sesiones_usuario
+                SET subastaActiva = NULL
+                WHERE persona = ?
+                """, userId);
     }
 
     private Integer nextBidderNumber(Integer auctionId) {
@@ -526,13 +658,13 @@ public class BidRoomService {
     private InvalidBidAmountException invalidAmount(BigDecimal minimum, BigDecimal maximum) {
         if (maximum == null) {
             return new InvalidBidAmountException(
-                    "Ingresá un monto válido. El mínimo requerido es US$ %s."
+                    "Ingresa un monto valido. El minimo requerido es US$ %s."
                             .formatted(formatMoney(minimum))
             );
         }
 
         return new InvalidBidAmountException(
-                "Ingresá un monto válido. El mínimo requerido es US$ %s y el máximo es US$ %s."
+                "Ingresa un monto valido. El minimo requerido es US$ %s y el maximo es US$ %s."
                         .formatted(formatMoney(minimum), formatMoney(maximum))
         );
     }
@@ -580,6 +712,22 @@ public class BidRoomService {
         return value == null ? "comun" : value.toLowerCase(Locale.ROOT).trim();
     }
 
+    private boolean isAuctionFinished(java.time.LocalDate auctionDate, java.time.LocalTime auctionTime, String auctionState) {
+        if ("cerrada".equalsIgnoreCase(auctionState)) {
+            return true;
+        }
+        if (auctionDate == null || auctionTime == null) {
+            return false;
+        }
+        LocalDateTime auctionEnd = LocalDateTime.of(auctionDate, auctionTime).plusMinutes(AUCTION_DURATION_MINUTES);
+        return !auctionEnd.isAfter(LocalDateTime.now());
+    }
+
+    private Integer nullableInt(java.sql.ResultSet rs, String column) throws java.sql.SQLException {
+        int value = rs.getInt(column);
+        return rs.wasNull() ? null : value;
+    }
+
     private java.time.LocalDate toLocalDate(Date date) {
         return date == null ? java.time.LocalDate.now() : date.toLocalDate();
     }
@@ -603,12 +751,27 @@ public class BidRoomService {
     private record ClientInfo(Integer id, String admitted, String category) {
     }
 
-    private record AuctionInfo(Integer id, String category) {
+    private record AuctionInfo(
+            Integer id,
+            String category,
+            String currency,
+            java.time.LocalDate date,
+            java.time.LocalTime hour,
+            String state
+    ) {
     }
 
     private record AttendeeInfo(Integer id, Integer clientId, Integer auctionId) {
     }
 
     private record LotBidInfo(Integer itemId, BigDecimal basePrice, String auctioned, String auctionCategory) {
+    }
+
+    private record ActiveSessionInfo(
+            Integer auctionId,
+            java.time.LocalDate auctionDate,
+            java.time.LocalTime auctionHour,
+            String auctionState
+    ) {
     }
 }

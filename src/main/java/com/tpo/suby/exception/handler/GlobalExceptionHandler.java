@@ -1,16 +1,16 @@
 package com.tpo.suby.exception.handler;
 
-import com.tpo.suby.exception.NotFoundException;
 import com.tpo.suby.exception.CodeExpiredException;
+import com.tpo.suby.exception.NotFoundException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.InsufficientAuthenticationException;
 import org.springframework.security.core.AuthenticationException;
-import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
 
 import java.util.Map;
 
@@ -22,7 +22,7 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.NOT_FOUND).body(
                 Map.of(
                         "status", "failed",
-                        "message", "No se encontró una solicitud de recuperación de contraseña para este correo."
+                        "message", ex.getMessage()
                 )
         );
     }
@@ -32,7 +32,7 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.GONE).body(
                 Map.of(
                         "status", "failed",
-                        "message", "El código de verificación ha expirado. Por favor, solicita uno nuevo."
+                        "message", "El codigo de verificacion ha expirado. Por favor, solicita uno nuevo."
                 )
         );
     }
@@ -52,7 +52,7 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(
                 Map.of(
                         "status", "failed",
-                        "message", "El código ingresado es incorrecto. Por favor, verifica e inténtalo nuevamente."
+                        "message", "Credenciales invalidas."
                 )
         );
     }
@@ -62,7 +62,7 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(
                 Map.of(
                         "status", "failed",
-                        "message", "El enlace de configuracion de contrasena ha expirado o es invalido."
+                        "message", "Debes iniciar sesion para continuar."
                 )
         );
     }
@@ -72,14 +72,24 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE).body(
                 Map.of(
                         "status", "failed",
-                        "message", "Las imágenes superan el tamaño máximo permitido. Probá subir fotos más livianas o en menor resolución."
+                        "message", "Las imagenes superan el tamano maximo permitido. Proba subir fotos mas livianas o en menor resolucion."
+                )
+        );
+    }
+
+    @ExceptionHandler(IllegalArgumentException.class)
+    public ResponseEntity<?> handleIllegalArgument(IllegalArgumentException ex) {
+        return ResponseEntity.badRequest().body(
+                Map.of(
+                        "status", "failed",
+                        "message", ex.getMessage()
                 )
         );
     }
 
     @ExceptionHandler(RuntimeException.class)
     public ResponseEntity<?> handleRuntime(RuntimeException ex) {
-        if ("Ocurrió un problema al intentar enviar el correo. Por favor, inténtalo más tarde.".equals(ex.getMessage())) {
+        if ("Ocurrio un problema al intentar enviar el correo. Por favor, intentalo mas tarde.".equals(ex.getMessage())) {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(
                     Map.of(
                             "status", "failed",

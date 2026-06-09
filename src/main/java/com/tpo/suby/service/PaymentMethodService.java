@@ -132,19 +132,20 @@ public class PaymentMethodService {
                 userId,
                 "tarjeta_credito",
                 "verificado",
-                "ARS",
+                normalizeCurrency(request.getCurrency(), "ARS"),
                 BigDecimal.ZERO,
                 cardExpirationDate(request.getExpiry())
         );
 
         String brand = detectCardBrand(request.getCardNumber());
+        String isInternational = isInternationalCard(request) ? "si" : "no";
         jdbcTemplate.update("""
                 INSERT INTO tarjetasCredito (
                     identificador, nombreTitular, numeroEnmascarado,
                     redTarjeta, esInternacional, pais
                 )
                 VALUES (?, ?, ?, ?, ?, ?)
-                """, paymentMethodId, request.getCardHolder(), masked, brand, "no", defaultCountryId());
+                """, paymentMethodId, request.getCardHolder(), masked, brand, isInternational, cardCountryId(request));
 
         CreatedPaymentMethodResponse response = CreatedPaymentMethodResponse.builder()
                 .paymentMethodId(paymentMethodId)
@@ -174,7 +175,7 @@ public class PaymentMethodService {
                 userId,
                 "cuenta_bancaria",
                 "verificado",
-                "ARS",
+                normalizeCurrency(request.getCurrency(), defaultCurrencyForBank(request)),
                 positiveOrZero(request.getReservedAmount()),
                 null
         );
@@ -219,12 +220,12 @@ public class PaymentMethodService {
         }
 
         Integer employeeId = firstEmployeeId();
-        Integer auctionId = firstAuctionId();
+        Integer auctionId = resolveCertifiedCheckAuctionId(request.getAuctionId());
         Integer paymentMethodId = insertPaymentMethod(
                 userId,
                 "cheque_certificado",
                 "pendiente",
-                "ARS",
+                normalizeCurrency(request.getCurrency(), "ARS"),
                 request.getAmount(),
                 null
         );
@@ -338,6 +339,30 @@ public class PaymentMethodService {
                 && !isBlank(request.getHolderName());
     }
 
+    private Integer cardCountryId(PaymentMethodRequest request) {
+        if (isBlank(request.getCountry())) {
+            return defaultCountryId();
+        }
+        return countryId(request.getCountry());
+    }
+
+    private boolean isInternationalCard(PaymentMethodRequest request) {
+        if (!isBlank(request.getCountry()) && !isArgentina(request.getCountry())) {
+            return true;
+        }
+        return "USD".equals(normalizeCurrency(request.getCurrency(), "ARS"));
+    }
+
+    private String defaultCurrencyForBank(PaymentMethodRequest request) {
+        if (Boolean.TRUE.equals(request.getForeignBank())) {
+            return "USD";
+        }
+        if (!isBlank(request.getCountry()) && !isArgentina(request.getCountry())) {
+            return "USD";
+        }
+        return "ARS";
+    }
+
     private Integer defaultCountryId() {
         try {
             return jdbcTemplate.queryForObject("""
@@ -392,6 +417,54 @@ public class PaymentMethodService {
         } catch (EmptyResultDataAccessException ex) {
             throw new PaymentMethodValidationException("Missing employee verifier.");
         }
+    }
+
+    private Integer resolveCertifiedCheckAuctionId(Integer requestedAuctionId) {
+        if (requestedAuctionId != null && requestedAuctionId > 0) {
+            Integer count = jdbcTemplate.queryForObject("""
+                    SELECT COUNT(*)
+                    FROM subastas
+                    WHERE identificador = ?
+                    """, Integer.class, requestedAuctionId);
+            if (count != null && count > 0) {
+                return requestedAuctionId;
+            }
+            throw new PaymentMethodValidationException("Invalid auction for certified check.");
+        }
+
+        List<Integer> candidateAuctions = jdbcTemplate.query("""
+                SELECT s.identificador
+                FROM subastas s
+                WHERE s.estado = 'abierta'
+                  AND (
+                        CAST(s.fecha AS DATE) > CAST(GETDATE() AS DATE)
+                        OR (
+                            CAST(s.fecha AS DATE) = CAST(GETDATE() AS DATE)
+                            AND CAST(s.hora AS TIME) >= CAST(GETDATE() AS TIME)
+                        )
+                  )
+                ORDER BY s.fecha ASC, s.hora ASC
+                """, (rs, rowNum) -> rs.getInt("identificador"));
+
+        if (candidateAuctions.size() == 1) {
+            return candidateAuctions.get(0);
+        }
+        if (candidateAuctions.isEmpty()) {
+            throw new PaymentMethodValidationException("Missing auction for certified check.");
+        }
+        throw new PaymentMethodValidationException("Certified check must be linked to a specific auction.");
+    }
+
+    private String normalizeCurrency(String currency, String defaultCurrency) {
+        if (isBlank(currency)) {
+            return defaultCurrency;
+        }
+
+        String normalized = currency.trim().toUpperCase(Locale.ROOT);
+        if (!"ARS".equals(normalized) && !"USD".equals(normalized)) {
+            throw new PaymentMethodValidationException("Invalid currency.");
+        }
+        return normalized;
     }
 
     private Integer firstAuctionId() {
