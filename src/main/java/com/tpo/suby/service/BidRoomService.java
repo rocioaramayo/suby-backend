@@ -144,10 +144,8 @@ public class BidRoomService {
         }
 
         BigDecimal currentOffer = currentOffer(itemId, lot.basePrice());
-        BigDecimal minimum = currentOffer.add(percent(lot.basePrice(), "0.01"));
-        BigDecimal maximum = hasNoMaximum(lot.auctionCategory())
-                ? null
-                : currentOffer.add(percent(lot.basePrice(), "0.20"));
+        BigDecimal minimum = minimumAllowedBid(currentOffer, lot.basePrice(), lot.auctionCategory());
+        BigDecimal maximum = maximumAllowedBid(currentOffer, lot.basePrice(), lot.auctionCategory());
 
         BigDecimal amount = request.getAmount();
         if (amount.compareTo(BigDecimal.ZERO) <= 0
@@ -223,8 +221,8 @@ public class BidRoomService {
                         .totalBids(rs.getInt("total_bids"))
                         .lastBidder(formatBidderName(rs.getString("last_bidder_name")))
                         .secondsRemaining(secondsRemaining)
-                        .minimumNextBid(currentOffer.add(percent(basePrice, "0.01")))
-                        .maximumNextBid(hasNoMaximum(auctionCategory) ? null : currentOffer.add(percent(basePrice, "0.20")))
+                        .minimumNextBid(minimumAllowedBid(currentOffer, basePrice, auctionCategory))
+                        .maximumNextBid(maximumAllowedBid(currentOffer, basePrice, auctionCategory))
                         .auctioned(rs.getString("auctioned"))
                         .activeLot(activeLot)
                         .build();
@@ -687,6 +685,22 @@ public class BidRoomService {
 
     private BigDecimal percent(BigDecimal base, String percent) {
         return base.multiply(new BigDecimal(percent)).setScale(2, RoundingMode.HALF_UP);
+    }
+
+    private BigDecimal minimumAllowedBid(BigDecimal currentOffer, BigDecimal basePrice, String auctionCategory) {
+        if (hasNoMaximum(auctionCategory)) {
+            return currentOffer.add(BigDecimal.ONE).setScale(2, RoundingMode.HALF_UP);
+        }
+
+        return currentOffer.add(percent(basePrice, "0.01"));
+    }
+
+    private BigDecimal maximumAllowedBid(BigDecimal currentOffer, BigDecimal basePrice, String auctionCategory) {
+        if (hasNoMaximum(auctionCategory)) {
+            return null;
+        }
+
+        return currentOffer.add(percent(basePrice, "0.20"));
     }
 
     private BigDecimal commissionPercentage(BigDecimal commission, BigDecimal basePrice) {
