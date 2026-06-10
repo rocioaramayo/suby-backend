@@ -69,11 +69,7 @@ public class AuctionService {
                     s.categoria AS category,
                     s.fecha AS date,
                     CAST(DATEADD(MINUTE, ?, CAST(s.hora AS DATETIME)) AS TIME) AS end_time,
-                    CASE
-                        WHEN s.estado = 'abierta' AND CAST(s.fecha AS DATE) = CAST(GETDATE() AS DATE) THEN 'en_vivo'
-                        WHEN s.estado = 'abierta' AND CAST(s.fecha AS DATE) > CAST(GETDATE() AS DATE) THEN 'proxima'
-                        ELSE 'finalizada'
-                    END AS status,
+                    %s AS status,
                     ps.nombre AS auctioneer,
                     COALESCE(lotes.total_lots, 0) AS total_lots,
                     COALESCE(lotes.sold_lots, 0) AS sold_lots,
@@ -111,7 +107,7 @@ public class AuctionService {
                 %s
                 ORDER BY s.fecha ASC, s.hora ASC
                 OFFSET ? ROWS FETCH NEXT ? ROWS ONLY
-                """.formatted(where), ps -> {
+                """.formatted(AuctionStatusSql.normalizedStatusCase("s.estado", "s.fecha"), where), ps -> {
             int index = 1;
             ps.setInt(index++, AUCTION_DURATION_MINUTES);
             for (Object param : params) {
@@ -160,11 +156,7 @@ public class AuctionService {
                         s.fecha AS date,
                         s.hora AS hour,
                         CAST(DATEADD(MINUTE, ?, CAST(s.hora AS DATETIME)) AS TIME) AS end_time,
-                        CASE
-                            WHEN s.estado = 'abierta' AND CAST(s.fecha AS DATE) = CAST(GETDATE() AS DATE) THEN 'en_vivo'
-                            WHEN s.estado = 'abierta' AND CAST(s.fecha AS DATE) > CAST(GETDATE() AS DATE) THEN 'proxima'
-                            ELSE 'finalizada'
-                        END AS status,
+                        %s AS status,
                         s.categoria AS category,
                         s.ubicacion AS location,
                         sub.identificador AS auctioneer_id,
@@ -180,7 +172,7 @@ public class AuctionService {
                         ORDER BY c.identificador ASC
                     ) c
                     WHERE s.identificador = ?
-                    """, (rs, rowNum) -> AuctionDetailResponse.builder()
+                    """.formatted(AuctionStatusSql.normalizedStatusCase("s.estado", "s.fecha")), (rs, rowNum) -> AuctionDetailResponse.builder()
                     .id(rs.getInt("id"))
                     .name(rs.getString("name"))
                     .date(toLocalDate(rs.getDate("date")))

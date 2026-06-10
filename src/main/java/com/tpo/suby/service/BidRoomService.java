@@ -35,7 +35,9 @@ import java.sql.Statement;
 import java.sql.Time;
 import java.text.DecimalFormat;
 import java.text.DecimalFormatSymbols;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.time.ZoneId;
 import java.util.Locale;
 
@@ -58,6 +60,10 @@ public class BidRoomService {
         UsuarioApp user = authenticatedUser();
         ClientInfo client = clientInfo(user.getIdentificador());
         AuctionInfo auction = auctionInfo(auctionId);
+
+        if (!isAuctionStarted(auction.date(), auction.hour())) {
+            throw new AuctionRoomAccessException("La subasta todavia no comenzo.");
+        }
 
         if (!"activo".equalsIgnoreCase(user.getEstadoApp())
                 || !"si".equalsIgnoreCase(client.admitted())) {
@@ -116,6 +122,10 @@ public class BidRoomService {
         UsuarioApp user = authenticatedUser();
         ClientInfo client = clientInfo(user.getIdentificador());
         AuctionInfo auction = auctionInfo(auctionId);
+
+        if (!isAuctionStarted(auction.date(), auction.hour())) {
+            throw new AuctionRoomAccessException("Este lote todavia no esta habilitado para puja.");
+        }
 
         if (hasBidRestrictions(user, client.id())) {
             throw new BidRestrictedException("Bid restricted.");
@@ -720,6 +730,14 @@ public class BidRoomService {
 
     private boolean isAuctionFinished(java.time.LocalDate auctionDate, java.time.LocalTime auctionTime, String auctionState) {
         return "cerrada".equalsIgnoreCase(auctionState);
+    }
+
+    private boolean isAuctionStarted(LocalDate auctionDate, LocalTime auctionTime) {
+        LocalDateTime startsAt = LocalDateTime.of(
+                auctionDate == null ? LocalDate.now() : auctionDate,
+                auctionTime == null ? LocalTime.MIDNIGHT : auctionTime
+        );
+        return !startsAt.isAfter(LocalDateTime.now());
     }
 
     private Integer nullableInt(java.sql.ResultSet rs, String column) throws java.sql.SQLException {
