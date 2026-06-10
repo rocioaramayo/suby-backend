@@ -19,10 +19,14 @@ import com.tpo.suby.exception.WonItemAlreadyPaidException;
 import com.tpo.suby.exception.WonItemPaymentNotFoundException;
 import com.tpo.suby.repository.UsuarioAppRepository;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.support.GeneratedKeyHolder;
 import org.springframework.jdbc.support.KeyHolder;
+import org.springframework.mail.SimpleMailMessage;
+import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
@@ -41,6 +45,7 @@ import java.util.List;
 import java.util.Map;
 
 @Service
+@Slf4j
 @RequiredArgsConstructor
 public class UserBidService {
 
@@ -50,6 +55,10 @@ public class UserBidService {
     private final UsuarioAppRepository usuarioAppRepository;
     private final PrivateMessageService privateMessageService;
     private final UserCategoryService userCategoryService;
+    private final JavaMailSender mailSender;
+
+    @Value("${spring.mail.username}")
+    private String mailFrom;
 
     public UserBidHistoryResponse getBidHistory(Integer userId) {
         validateOwner(userId);
@@ -224,6 +233,7 @@ public class UserBidService {
                         .formatted(formatMoney(totalToPay), defaultText(wonBid.title()), defaultText(wonBid.auctionName())),
                 paymentConfirmedMessageData(userId, wonBid, commissionPct, commissionAmount, shippingAmount, totalToPay, retiroPresencial, shippingAddress)
         );
+        sendPaymentConfirmationEmail(userId, wonBid, commissionAmount, shippingAmount, totalToPay, retiroPresencial, shippingAddress);
         userCategoryService.refreshCategory(userId);
 
         return "Pago confirmado. Recibiras la confirmacion por email.";
@@ -580,6 +590,12 @@ public class UserBidService {
         return "$ " + safeAmount.setScale(2, RoundingMode.HALF_UP);
     }
 
+    private String formatMoney(BigDecimal amount, String currency) {
+        BigDecimal safeAmount = amount == null ? BigDecimal.ZERO : amount;
+        String symbol = "USD".equalsIgnoreCase(currency) ? "US$ " : "$ ";
+        return symbol + safeAmount.setScale(2, RoundingMode.HALF_UP);
+    }
+
     private String defaultText(String value) {
         return value == null || value.isBlank() ? "tu operacion" : value;
     }
@@ -645,6 +661,84 @@ public class UserBidService {
         }
 
         return baseReference + "|ENVIO|" + shippingAddress;
+    }
+
+    private void sendPaymentConfirmationEmail(
+            Integer userId,
+            WonBidCore wonBid,
+            BigDecimal commissionAmount,
+            BigDecimal shippingAmount,
+            BigDecimal totalToPay,
+            boolean retiroPresencial,
+            String shippingAddress
+    ) {
+        String recipientEmail = userEmail(userId);
+        if (recipientEmail == null || recipientEmail.isBlank()) {
+            log.warn("Skipping payment confirmation email because user {} has no email", userId);
+            return;
+        }
+
+        String deliverySummary = retiroPresencial
+                ? "Retiro personal en deposito (sin costo de envio)."
+                : "Envio a domicilio%s."
+                .formatted(
+                        shippingAddress == null || shippingAddress.isBlank()
+                                ? ""
+                                : " a " + shippingAddress
+                );
+
+        SimpleMailMessage message = new SimpleMailMessage();
+        message.setFrom(mailFrom);
+        message.setTo(recipientEmail);
+        message.setSubject("Pago confirmado - " + defaultText(wonBid.lotCode()));
+        message.setText("""
+                Hola,
+
+                Confirmamos el pago de tu compra en Suby.
+
+                Lote: %s
+                Articulo: %s
+                Subasta: %s
+                Puja ganadora: %s
+                Comision: %s
+                Envio: %s
+                Total abonado: %s
+
+                Modalidad de entrega:
+                %s
+
+                Podes revisar el detalle completo desde la app.
+
+                Saludos,
+                Equipo Suby
+                """.formatted(
+                defaultText(wonBid.lotCode()),
+                defaultText(wonBid.title()),
+                defaultText(wonBid.auctionName()),
+                formatMoney(wonBid.winningBid(), wonBid.auctionCurrency()),
+                formatMoney(commissionAmount, wonBid.auctionCurrency()),
+                retiroPresencial ? "Sin cargo" : formatMoney(shippingAmount, wonBid.auctionCurrency()),
+                formatMoney(totalToPay, wonBid.auctionCurrency()),
+                deliverySummary
+        ));
+
+        try {
+            mailSender.send(message);
+        } catch (Exception ex) {
+            log.warn("Failed to send payment confirmation email to {}", recipientEmail, ex);
+        }
+    }
+
+    private String userEmail(Integer userId) {
+        try {
+            return jdbcTemplate.queryForObject("""
+                    SELECT email
+                    FROM usuarios_app
+                    WHERE identificador = ?
+                    """, String.class, userId);
+        } catch (EmptyResultDataAccessException ex) {
+            return null;
+        }
     }
 
     private record WonBidCore(
