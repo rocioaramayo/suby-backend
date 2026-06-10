@@ -35,7 +35,6 @@ import java.sql.Statement;
 import java.sql.Time;
 import java.text.DecimalFormat;
 import java.text.DecimalFormatSymbols;
-import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.Locale;
@@ -44,10 +43,11 @@ import java.util.Locale;
 @RequiredArgsConstructor
 public class BidRoomService {
 
-    private static final int AUCTION_DURATION_MINUTES = 1;
+    private static final int LOT_INACTIVITY_SECONDS = 60;
 
     private final JdbcTemplate jdbcTemplate;
     private final UsuarioAppRepository usuarioAppRepository;
+    private final AuctionLotStateService auctionLotStateService;
 
     @Transactional
     public AttendeeRegistrationResponse registerAttendee(Integer auctionId) {
@@ -125,6 +125,10 @@ public class BidRoomService {
         AttendeeInfo attendee = attendeeInfo(request.getAttendeeId(), auctionId, client.id());
         LotBidInfo lot = lotBidInfo(auctionId, itemId);
 
+        if (!auctionLotStateService.isActiveLot(auctionId, itemId)) {
+            throw new AuctionRoomAccessException("Este lote todavía no está habilitado para puja.");
+        }
+
         if ("si".equalsIgnoreCase(lot.auctioned())) {
             throw new AdjudicatedLotException("Lot already adjudicated.");
         }
@@ -147,6 +151,7 @@ public class BidRoomService {
         }
 
         Integer bidId = insertBid(attendee.id(), itemId, amount);
+        auctionLotStateService.touchActivity(auctionId, itemId);
 
         return BidResponse.builder()
                 .bidId(bidId)
@@ -196,10 +201,10 @@ public class BidRoomService {
                 BigDecimal basePrice = rs.getBigDecimal("base_price");
                 BigDecimal currentOffer = rs.getBigDecimal("current_offer");
                 String auctionCategory = rs.getString("auction_category");
-                LocalDateTime auctionEnd = LocalDateTime.of(
-                        toLocalDate(rs.getDate("auction_date")),
-                        toLocalTime(rs.getTime("auction_time"))
-                ).plusMinutes(AUCTION_DURATION_MINUTES);
+                boolean activeLot = auctionLotStateService.isActiveLot(auctionId, itemId);
+                long secondsRemaining = activeLot
+                        ? auctionLotStateService.secondsRemaining(auctionId, itemId, LOT_INACTIVITY_SECONDS)
+                        : 0;
 
                 return LiveBidStatusResponse.builder()
                         .itemId(rs.getInt("item_id"))
@@ -207,10 +212,11 @@ public class BidRoomService {
                         .currentOffer(currentOffer)
                         .totalBids(rs.getInt("total_bids"))
                         .lastBidder(formatBidderName(rs.getString("last_bidder_name")))
-                        .secondsRemaining(Math.max(0, Duration.between(LocalDateTime.now(), auctionEnd).toSeconds()))
+                        .secondsRemaining(secondsRemaining)
                         .minimumNextBid(currentOffer.add(percent(basePrice, "0.01")))
                         .maximumNextBid(hasNoMaximum(auctionCategory) ? null : currentOffer.add(percent(basePrice, "0.20")))
                         .auctioned(rs.getString("auctioned"))
+                        .activeLot(activeLot)
                         .build();
             }, auctionId, itemId);
         } catch (EmptyResultDataAccessException ex) {
@@ -292,7 +298,7 @@ public class BidRoomService {
                 LocalDateTime auctionedAt = LocalDateTime.of(
                         toLocalDate(rs.getDate("auction_date")),
                         toLocalTime(rs.getTime("auction_time"))
-                ).plusMinutes(AUCTION_DURATION_MINUTES);
+                );
 
                 return BidResultResponse.builder()
                         .itemId(rs.getInt("item_id"))
@@ -713,14 +719,7 @@ public class BidRoomService {
     }
 
     private boolean isAuctionFinished(java.time.LocalDate auctionDate, java.time.LocalTime auctionTime, String auctionState) {
-        if ("cerrada".equalsIgnoreCase(auctionState)) {
-            return true;
-        }
-        if (auctionDate == null || auctionTime == null) {
-            return false;
-        }
-        LocalDateTime auctionEnd = LocalDateTime.of(auctionDate, auctionTime).plusMinutes(AUCTION_DURATION_MINUTES);
-        return !auctionEnd.isAfter(LocalDateTime.now());
+        return "cerrada".equalsIgnoreCase(auctionState);
     }
 
     private Integer nullableInt(java.sql.ResultSet rs, String column) throws java.sql.SQLException {

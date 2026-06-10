@@ -17,60 +17,68 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class AuctionLifecycleService {
 
-    private static final int AUCTION_DURATION_MINUTES = 1;
+    private static final int LOT_INACTIVITY_SECONDS = 60;
     private static final BigDecimal ESTIMATED_SHIPPING_AMOUNT = new BigDecimal("150.00");
     private static final String COMPANY_BUYER_DOCUMENT = "SUBY-COMPANY-BUYER";
     private static final String COMPANY_BUYER_NAME = "Suby";
 
     private final JdbcTemplate jdbcTemplate;
     private final PrivateMessageService privateMessageService;
+    private final AuctionLotStateService auctionLotStateService;
 
-    @Scheduled(fixedDelay = 60000)
+    @Scheduled(fixedDelay = 10000)
     @Transactional
     public void closeEndedAuctions() {
-        List<AuctionSettlementInfo> endedAuctions = jdbcTemplate.query("""
+        List<AuctionSettlementInfo> activeAuctions = jdbcTemplate.query("""
                 SELECT
                     s.identificador AS auction_id,
                     COALESCE(se.moneda, 'ARS') AS currency
                 FROM subastas s
                 LEFT JOIN subastas_ext se ON se.identificador = s.identificador
                 WHERE s.estado = 'abierta'
-                  AND DATEADD(MINUTE, ?, CAST(CONCAT(CONVERT(varchar(10), s.fecha, 120), ' ', CONVERT(varchar(8), s.hora, 108)) AS DATETIME)) <= GETDATE()
+                  AND CAST(CONCAT(CONVERT(varchar(10), s.fecha, 120), ' ', CONVERT(varchar(8), s.hora, 108)) AS DATETIME) <= GETDATE()
                 """, (rs, rowNum) -> new AuctionSettlementInfo(
                 rs.getInt("auction_id"),
                 rs.getString("currency")
-        ), AUCTION_DURATION_MINUTES);
+        ));
 
-        for (AuctionSettlementInfo auction : endedAuctions) {
-            settleAuction(auction);
+        for (AuctionSettlementInfo auction : activeAuctions) {
+            progressAuction(auction);
         }
     }
 
-    private void settleAuction(AuctionSettlementInfo auction) {
-        List<Integer> itemIds = jdbcTemplate.query("""
-                SELECT ic.identificador
-                FROM catalogos c
-                JOIN itemsCatalogo ic ON ic.catalogo = c.identificador
-                WHERE c.subasta = ?
-                  AND COALESCE(ic.subastado, 'no') = 'no'
-                ORDER BY ic.identificador ASC
-                """, (rs, rowNum) -> rs.getInt("identificador"), auction.id());
-
-        for (Integer itemId : itemIds) {
-            settleItem(auction, itemId);
+    private void progressAuction(AuctionSettlementInfo auction) {
+        Integer activeItemId = auctionLotStateService.currentActiveItemId(auction.id());
+        if (activeItemId == null) {
+            closeAuction(auction.id());
+            return;
         }
 
+        auctionLotStateService.ensureActiveLotState(auction.id(), activeItemId);
+        if (!auctionLotStateService.shouldSettle(auction.id(), activeItemId, LOT_INACTIVITY_SECONDS)) {
+            return;
+        }
+
+        settleItem(auction, activeItemId);
+        auctionLotStateService.markClosed(auction.id(), activeItemId);
+
+        if (auctionLotStateService.currentActiveItemId(auction.id()) == null) {
+            closeAuction(auction.id());
+        }
+    }
+
+    private void closeAuction(Integer auctionId) {
         jdbcTemplate.update("""
                 UPDATE subastas
                 SET estado = 'cerrada'
                 WHERE identificador = ?
-                """, auction.id());
+                """, auctionId);
 
         jdbcTemplate.update("""
                 UPDATE sesiones_usuario
                 SET subastaActiva = NULL
                 WHERE subastaActiva = ?
-                """, auction.id());
+                """, auctionId);
     }
 
     private void settleItem(AuctionSettlementInfo auction, Integer itemId) {

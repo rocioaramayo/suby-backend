@@ -34,5 +34,8 @@ public class LiveBidStatusResponse {
     @JsonProperty("maximum_next_bid")
     private BigDecimal maximumNextBid;
 
+    @JsonProperty("active_lot")
+    private Boolean activeLot;
+
     private String auctioned;
 }
