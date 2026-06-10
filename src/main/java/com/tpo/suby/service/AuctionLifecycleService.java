@@ -325,7 +325,7 @@ public class AuctionLifecycleService {
         Map<String, String> data = new LinkedHashMap<>();
         data.put("headline", "Felicitaciones! Ganaste la subasta");
         data.put("product_id", String.valueOf(productId));
-        data.put("item_id", String.valueOf(productId));
+        data.put("item_id", String.valueOf(itemId));
         data.put("lot_code", "LOT-" + String.format("%03d", itemId));
         data.put("item_title", defaultText(itemTitle));
         data.put("auction_name", defaultText(auctionName));
@@ -335,7 +335,7 @@ public class AuctionLifecycleService {
         data.put("total_to_pay", formatMoney(winningAmount.add(commissionAmount).add(ESTIMATED_SHIPPING_AMOUNT)));
         data.put("currency", currency);
         data.put("cta_label", "Ir a pagar");
-        data.put("cta_target", "/won-items/%s/payment".formatted(productId));
+        data.put("cta_target", "/won-items/%s/payment".formatted(itemId));
         privateMessageService.createPrivateMessage(
                 clientId,
                 "ganador_subasta",

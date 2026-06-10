@@ -23,6 +23,7 @@ import org.springframework.web.multipart.MultipartFile;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.time.LocalDate;
 
 @RestController
 @RequestMapping("/api/v1/users/{userId}/products")
@@ -65,6 +66,10 @@ public class UserProductController {
             @RequestParam("insurance_policy") String insurancePolicy,
             @RequestParam("ownership_declaration") Boolean ownershipDeclaration,
             @RequestParam("receiving_account_id") Integer receivingAccountId,
+            @RequestParam(value = "is_art", required = false) Boolean isArt,
+            @RequestParam(value = "artist", required = false) String artist,
+            @RequestParam(value = "creation_date", required = false) String creationDate,
+            @RequestParam(value = "historical_context", required = false) String historicalContext,
             @RequestParam(value = "photos", required = false) MultipartFile[] photos,
             @RequestParam(value = "photos[]", required = false) MultipartFile[] bracketPhotos,
             @RequestParam(value = "origin_docs", required = false) MultipartFile[] originDocs,
@@ -79,6 +84,10 @@ public class UserProductController {
                 insurancePolicy,
                 ownershipDeclaration,
                 receivingAccountId,
+                isArt,
+                artist,
+                parseCreationDate(creationDate),
+                historicalContext,
                 mergeFiles(photos, bracketPhotos),
                 mergeFiles(originDocs, bracketOriginDocs)
         );
@@ -133,5 +142,17 @@ public class UserProductController {
         }
 
         return merged.toArray(MultipartFile[]::new);
+    }
+
+    private LocalDate parseCreationDate(String rawValue) {
+        if (rawValue == null || rawValue.isBlank()) {
+            return null;
+        }
+
+        try {
+            return LocalDate.parse(rawValue.trim());
+        } catch (Exception ex) {
+            throw new OwnerProductValidationException("Invalid creation date.");
+        }
     }
 }

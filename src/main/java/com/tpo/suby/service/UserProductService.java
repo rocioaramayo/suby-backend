@@ -67,6 +67,7 @@ public class UserProductService {
                     COALESCE(pe.nroPoliza, p.seguro) AS insurance_policy,
                     dep.identificador AS deposit_id,
                     dep.nombre AS deposit_name,
+                    dep.direccion AS deposit_address,
                     COALESCE(ic.precioBase, seg.importe, 0) AS estimated_value,
                     p.descripcionCatalogo AS catalog_description
                 FROM productos p
@@ -97,9 +98,11 @@ public class UserProductService {
                 .deposit(rs.getObject("deposit_id") == null ? null : OwnerProductDepositResponse.builder()
                         .id(rs.getInt("deposit_id"))
                         .name(rs.getString("deposit_name"))
+                        .address(rs.getString("deposit_address"))
                         .build())
                 .estimatedValue(rs.getBigDecimal("estimated_value"))
                 .catalogDescription(rs.getString("catalog_description"))
+                .thumbnailUrl(firstOwnerProductPhotoUrl(userId, rs.getInt("product_id")))
                 .build(), userId);
 
         int accepted = (int) products.stream()
@@ -123,6 +126,10 @@ public class UserProductService {
             String insurancePolicy,
             Boolean ownershipDeclaration,
             Integer receivingAccountId,
+            Boolean isArt,
+            String artist,
+            LocalDate creationDate,
+            String historicalContext,
             MultipartFile[] photos,
             MultipartFile[] originDocs
     ) {
@@ -160,8 +167,9 @@ public class UserProductService {
                     identificador, titulo, descripcionLarga, artista,
                     fechaCreacion, historia, esObraDeArte
                 )
-                VALUES (?, ?, ?, NULL, NULL, ?, ?)
-                """, productId, name, fullDescription, originProvenance, inferArtCategory(name, fullDescription));
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, productId, name, fullDescription, nullableTrim(artist), creationDate,
+                buildHistory(originProvenance, historicalContext), normalizeArtFlag(isArt, name, fullDescription));
 
         for (MultipartFile photo : photos) {
             insertPhoto(productId, photo);
@@ -246,6 +254,25 @@ public class UserProductService {
             throw new OwnerProductValidationException("Invalid owner product request.");
         }
         return key.intValue();
+    }
+
+    private String firstOwnerProductPhotoUrl(Integer userId, Integer productId) {
+        try {
+            Integer photoId = jdbcTemplate.queryForObject("""
+                    SELECT TOP 1 identificador
+                    FROM fotos
+                    WHERE producto = ?
+                    ORDER BY identificador ASC
+                    """, Integer.class, productId);
+
+            if (photoId == null) {
+                return null;
+            }
+
+            return "/api/v1/users/%d/products/%d/photos/%d".formatted(userId, productId, photoId);
+        } catch (EmptyResultDataAccessException ex) {
+            return null;
+        }
     }
 
     private void insertPhoto(Integer productId, MultipartFile photo) {
@@ -413,6 +440,38 @@ public class UserProductService {
 
     private boolean isBlank(String value) {
         return value == null || value.isBlank();
+    }
+
+    private String nullableTrim(String value) {
+        if (value == null) {
+            return null;
+        }
+
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
+    }
+
+    private String buildHistory(String originProvenance, String historicalContext) {
+        String origin = nullableTrim(originProvenance);
+        String context = nullableTrim(historicalContext);
+
+        if (origin == null) {
+            return context;
+        }
+
+        if (context == null) {
+            return origin;
+        }
+
+        return origin + "\n\nContexto histórico: " + context;
+    }
+
+    private String normalizeArtFlag(Boolean isArt, String name, String fullDescription) {
+        if (isArt != null) {
+            return Boolean.TRUE.equals(isArt) ? "si" : "no";
+        }
+
+        return inferArtCategory(name, fullDescription);
     }
 
     private String detectContentType(byte[] bytes) {

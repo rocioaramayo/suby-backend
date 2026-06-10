@@ -24,6 +24,8 @@ public class WonItemPaymentDetailResponse {
     @JsonProperty("auction_name")
     private String auctionName;
 
+    private String auctioneer;
+
     private String currency;
 
     @JsonProperty("winning_bid")
@@ -42,6 +44,12 @@ public class WonItemPaymentDetailResponse {
 
     @JsonProperty("estimated_payment_date")
     private LocalDate estimatedPaymentDate;
+
+    @JsonProperty("pickup_available")
+    private Boolean pickupAvailable;
+
+    @JsonProperty("shipping_address")
+    private String shippingAddress;
 
     @JsonProperty("payment_methods")
     private List<PaymentMethodItemResponse> paymentMethods;

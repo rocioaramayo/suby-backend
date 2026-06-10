@@ -164,6 +164,7 @@ public class UserBidService {
                 .lotCode(wonBid.lotCode())
                 .title(wonBid.title())
                 .auctionName(wonBid.auctionName())
+                .auctioneer(wonBid.auctioneer())
                 .currency(wonBid.auctionCurrency())
                 .winningBid(wonBid.winningBid())
                 .commission(commissionAmount)
@@ -171,6 +172,8 @@ public class UserBidService {
                 .pickupAmount(BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP))
                 .totalToPay(wonBid.winningBid().add(commissionAmount).add(shippingAmount))
                 .estimatedPaymentDate(wonBid.auctionDate().plusDays(6))
+                .pickupAvailable(true)
+                .shippingAddress(ownerAddress(userId))
                 .paymentMethods(paymentMethods(userId))
                 .build();
     }
@@ -201,6 +204,7 @@ public class UserBidService {
         BigDecimal shippingAmount = retiroPresencial
                 ? BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP)
                 : ESTIMATED_SHIPPING_AMOUNT;
+        String shippingAddress = retiroPresencial ? null : ownerAddress(userId);
         BigDecimal totalToPay = wonBid.winningBid().add(commissionAmount).add(shippingAmount);
 
         PaymentMethodState paymentMethod = paymentMethodState(userId, request.getPaymentMethodId(), wonBid.auctionId());
@@ -210,7 +214,7 @@ public class UserBidService {
 
         Integer registroId = ensureRegistroSubasta(userId, wonBid, commissionAmount);
         ensureNotPaid(registroId, userId);
-        insertPago(userId, registroId, request.getPaymentMethodId(), totalToPay, wonBid.auctionCurrency(), retiroPresencial);
+        insertPago(userId, registroId, request.getPaymentMethodId(), totalToPay, wonBid.auctionCurrency(), retiroPresencial, shippingAddress);
         reservePaymentMethodAmount(paymentMethod, totalToPay);
         privateMessageService.createPrivateMessage(
                 userId,
@@ -218,7 +222,7 @@ public class UserBidService {
                 "Pago confirmado",
                 "Se confirmo el pago de %s por %s en %s."
                         .formatted(formatMoney(totalToPay), defaultText(wonBid.title()), defaultText(wonBid.auctionName())),
-                paymentConfirmedMessageData(userId, wonBid, commissionPct, commissionAmount, shippingAmount, totalToPay, retiroPresencial)
+                paymentConfirmedMessageData(userId, wonBid, commissionPct, commissionAmount, shippingAmount, totalToPay, retiroPresencial, shippingAddress)
         );
         userCategoryService.refreshCategory(userId);
 
@@ -472,7 +476,8 @@ public class UserBidService {
             Integer paymentMethodId,
             BigDecimal totalToPay,
             String currency,
-            boolean retiroPresencial
+            boolean retiroPresencial,
+            String shippingAddress
     ) {
         jdbcTemplate.update("""
                 INSERT INTO pagos (
@@ -481,7 +486,7 @@ public class UserBidService {
                 )
                 VALUES (?, ?, ?, ?, ?, ?, GETDATE(), ?, ?)
                 """, userId, registroId, paymentMethodId, totalToPay, currency, "confirmado", retiroPresencial ? "si" : "no",
-                "SUBY-PAY-" + registroId + "-" + paymentMethodId);
+                buildPaymentReference(registroId, paymentMethodId, retiroPresencial, shippingAddress));
     }
 
     private void reservePaymentMethodAmount(PaymentMethodState paymentMethod, BigDecimal totalToPay) {
@@ -586,7 +591,8 @@ public class UserBidService {
             BigDecimal commissionAmount,
             BigDecimal shippingAmount,
             BigDecimal totalToPay,
-            boolean retiroPresencial
+            boolean retiroPresencial,
+            String shippingAddress
     ) {
         Map<String, String> data = new LinkedHashMap<>();
         data.put("headline", "Informacion de pago - Subasta Ganada");
@@ -598,7 +604,10 @@ public class UserBidService {
         data.put("winning_bid", formatMoney(wonBid.winningBid()));
         data.put("commission_pct", commissionPct.setScale(2, RoundingMode.HALF_UP).toPlainString());
         data.put("commission_amount", formatMoney(commissionAmount));
-        data.put("shipping_amount", formatMoney(shippingAmount));
+        data.put("shipping_amount", retiroPresencial ? "Sin cargo" : formatMoney(shippingAmount));
+        if (shippingAddress != null && !shippingAddress.isBlank()) {
+            data.put("shipping_address", shippingAddress);
+        }
         data.put("total_to_pay", formatMoney(totalToPay));
         data.put("currency", wonBid.auctionCurrency());
         data.put("pickup_selected", retiroPresencial ? "si" : "no");
@@ -606,6 +615,36 @@ public class UserBidService {
         data.put("cta_label", "Ver compra");
         data.put("cta_target", "/users/%s/won-items/%s/payment".formatted(userId, wonBid.itemId()));
         return data;
+    }
+
+    private String ownerAddress(Integer userId) {
+        try {
+            return jdbcTemplate.queryForObject("""
+                    SELECT direccion
+                    FROM personas
+                    WHERE identificador = ?
+                    """, String.class, userId);
+        } catch (EmptyResultDataAccessException ex) {
+            return null;
+        }
+    }
+
+    private String buildPaymentReference(
+            Integer registroId,
+            Integer paymentMethodId,
+            boolean retiroPresencial,
+            String shippingAddress
+    ) {
+        String baseReference = "SUBY-PAY-" + registroId + "-" + paymentMethodId;
+        if (retiroPresencial) {
+            return baseReference + "|RETIRO";
+        }
+
+        if (shippingAddress == null || shippingAddress.isBlank()) {
+            return baseReference + "|ENVIO";
+        }
+
+        return baseReference + "|ENVIO|" + shippingAddress;
     }
 
     private record WonBidCore(

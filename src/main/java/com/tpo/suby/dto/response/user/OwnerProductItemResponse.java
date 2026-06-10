@@ -36,4 +36,7 @@ public class OwnerProductItemResponse {
 
     @JsonProperty("catalog_description")
     private String catalogDescription;
+
+    @JsonProperty("thumbnail_url")
+    private String thumbnailUrl;
 }

@@ -263,6 +263,7 @@ public class UserNotificationService {
         return jdbcTemplate.queryForObject("""
                 SELECT
                     rs.producto AS product_id,
+                    ic.identificador AS item_id,
                     COALESCE(pd.titulo, p.descripcionCatalogo, p.descripcionCompleta) AS product_name,
                     CONCAT('LOT-', RIGHT(CONCAT('000', ic.identificador), 3)) AS lot_code,
                     COALESCE(c.descripcion, CONCAT('Subasta ', s.identificador)) AS auction_name,
@@ -290,7 +291,8 @@ public class UserNotificationService {
                 """, (rs, rowNum) -> {
             Map<String, String> data = new LinkedHashMap<>();
             data.put("headline", "Informacion de pago - Subasta Ganada");
-            data.put("item_id", String.valueOf(rs.getInt("product_id")));
+            data.put("item_id", String.valueOf(rs.getInt("item_id")));
+            data.put("product_id", String.valueOf(rs.getInt("product_id")));
             data.put("lot_code", rs.getString("lot_code"));
             data.put("item_title", rs.getString("product_name"));
             data.put("auction_name", rs.getString("auction_name"));
@@ -304,7 +306,7 @@ public class UserNotificationService {
                 data.put("image_url", "/api/v1/users/%d/products/%d/photos/%d".formatted(userId, rs.getInt("product_id"), photoId));
             }
             data.put("cta_label", "Ir a pagar");
-            data.put("cta_target", "/won-items/%s/payment".formatted(rs.getInt("product_id")));
+            data.put("cta_target", "/won-items/%s/payment".formatted(rs.getInt("item_id")));
             return data;
         }, notificationId, userId);
     }
