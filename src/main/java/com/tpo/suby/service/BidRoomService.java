@@ -44,7 +44,7 @@ import java.util.Locale;
 @RequiredArgsConstructor
 public class BidRoomService {
 
-    private static final int AUCTION_DURATION_MINUTES = 210;
+    private static final int AUCTION_DURATION_MINUTES = 1;
 
     private final JdbcTemplate jdbcTemplate;
     private final UsuarioAppRepository usuarioAppRepository;

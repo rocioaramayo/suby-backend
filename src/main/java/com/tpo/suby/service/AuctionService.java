@@ -31,7 +31,7 @@ public class AuctionService {
 
     private static final Set<String> VALID_CATEGORIES = Set.of("comun", "especial", "plata", "oro", "platino");
     private static final Set<String> VALID_STATUSES = Set.of("proxima", "en_vivo", "finalizada");
-    private static final int AUCTION_DURATION_MINUTES = 210;
+    private static final int AUCTION_DURATION_MINUTES = 1;
 
     private final JdbcTemplate jdbcTemplate;
     private final AuctionPhotoService auctionPhotoService;

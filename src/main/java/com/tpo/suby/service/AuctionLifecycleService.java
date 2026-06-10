@@ -17,7 +17,7 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class AuctionLifecycleService {
 
-    private static final int AUCTION_DURATION_MINUTES = 210;
+    private static final int AUCTION_DURATION_MINUTES = 1;
     private static final BigDecimal ESTIMATED_SHIPPING_AMOUNT = new BigDecimal("150.00");
     private static final String COMPANY_BUYER_DOCUMENT = "SUBY-COMPANY-BUYER";
     private static final String COMPANY_BUYER_NAME = "Suby";
