@@ -11,6 +11,12 @@ import java.time.LocalDate;
 @Builder
 public class UserBidHistoryItemResponse {
 
+    @JsonProperty("item_id")
+    private Integer itemId;
+
+    @JsonProperty("auction_id")
+    private Integer auctionId;
+
     @JsonProperty("bid_id")
     private Integer bidId;
 

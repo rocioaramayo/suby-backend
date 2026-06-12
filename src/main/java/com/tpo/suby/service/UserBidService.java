@@ -65,6 +65,8 @@ public class UserBidService {
 
         List<UserBidHistoryItemResponse> bids = jdbcTemplate.query("""
                 SELECT
+                    ic.identificador AS item_id,
+                    s.identificador AS auction_id,
                     pu.identificador AS bid_id,
                     COALESCE(c.descripcion, CONCAT('Subasta ', s.identificador)) AS auction_name,
                     CONCAT('LOT-', RIGHT(CONCAT('000', ic.identificador), 3)) AS lot_code,
@@ -81,6 +83,8 @@ public class UserBidService {
                 WHERE a.cliente = ?
                 ORDER BY s.fecha DESC, pu.identificador DESC
                 """, (rs, rowNum) -> UserBidHistoryItemResponse.builder()
+                .itemId(rs.getInt("item_id"))
+                .auctionId(rs.getInt("auction_id"))
                 .bidId(rs.getInt("bid_id"))
                 .auctionName(rs.getString("auction_name"))
                 .lotCode(rs.getString("lot_code"))
