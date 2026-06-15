@@ -1,5 +1,18 @@
 package com.tpo.suby.service;
 
+import java.sql.Date;
+import java.sql.Time;
+import java.time.LocalDate;
+import java.time.LocalTime;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
+import java.util.Set;
+
+import org.springframework.dao.EmptyResultDataAccessException;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.stereotype.Service;
+
 import com.tpo.suby.dto.response.auction.AuctionCatalogItemResponse;
 import com.tpo.suby.dto.response.auction.AuctionCatalogResponse;
 import com.tpo.suby.dto.response.auction.AuctionDetailResponse;
@@ -11,19 +24,8 @@ import com.tpo.suby.dto.response.auction.LotDetailResponse;
 import com.tpo.suby.exception.InvalidQueryParameterException;
 import com.tpo.suby.exception.LotNotFoundException;
 import com.tpo.suby.exception.NotFoundException;
-import lombok.RequiredArgsConstructor;
-import org.springframework.dao.EmptyResultDataAccessException;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.stereotype.Service;
 
-import java.sql.Date;
-import java.sql.Time;
-import java.time.LocalDate;
-import java.time.LocalTime;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Locale;
-import java.util.Set;
+import lombok.RequiredArgsConstructor;
 
 @Service
 @RequiredArgsConstructor
@@ -204,12 +206,14 @@ public class AuctionService {
                     CAST(NULL AS VARCHAR(250)) AS attribution,
                     owner.nombre AS owner,
                     ic.precioBase AS base_price,
-                    thumbnail.photo_id AS thumbnail_photo_id
+                    thumbnail.photo_id AS thumbnail_photo_id,
+                    pd.categoriaTematica AS category -- AQUI AGREGAMOS LA CATEGORIA TEMATICA
                 FROM catalogos c
                 JOIN itemsCatalogo ic ON ic.catalogo = c.identificador
                 JOIN productos p ON p.identificador = ic.producto
                 LEFT JOIN duenios d ON d.identificador = p.duenio
                 LEFT JOIN personas owner ON owner.identificador = d.identificador
+                LEFT JOIN productos_detalle pd ON pd.identificador = p.identificador -- AQUI AGREGAMOS EL JOIN
                 OUTER APPLY (
                     SELECT TOP 1 f.identificador AS photo_id
                     FROM fotos f
@@ -224,6 +228,7 @@ public class AuctionService {
                 .title(rs.getString("title"))
                 .attribution(rs.getString("attribution"))
                 .owner(rs.getString("owner"))
+                .category(rs.getString("category")) // AQUI MAPEAMOS AL DTO
                 .basePrice(rs.getBigDecimal("base_price"))
                 .thumbnailUrl(auctionPhotoService.buildItemPhotoUrl(
                         rs.getInt("item_id"),

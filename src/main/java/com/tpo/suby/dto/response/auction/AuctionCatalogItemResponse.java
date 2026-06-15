@@ -1,10 +1,11 @@
 package com.tpo.suby.dto.response.auction;
 
+import java.math.BigDecimal;
+
 import com.fasterxml.jackson.annotation.JsonProperty;
+
 import lombok.Builder;
 import lombok.Getter;
-
-import java.math.BigDecimal;
 
 @Getter
 @Builder
@@ -22,9 +23,14 @@ public class AuctionCatalogItemResponse {
 
     private String owner;
 
+    private String category;
+
     @JsonProperty("base_price")
     private BigDecimal basePrice;
 
     @JsonProperty("thumbnail_url")
     private String thumbnailUrl;
+
+
+    
 }

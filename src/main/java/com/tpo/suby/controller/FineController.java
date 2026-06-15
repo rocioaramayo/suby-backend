@@ -1,11 +1,8 @@
 package com.tpo.suby.controller;
 
-import com.tpo.suby.dto.request.fine.PayFineRequest;
-import com.tpo.suby.dto.response.fine.FineResponse;
-import com.tpo.suby.exception.NotFoundException;
-import com.tpo.suby.exception.PaymentRequiredException;
-import com.tpo.suby.service.FineService;
-import lombok.RequiredArgsConstructor;
+import java.util.HashMap;
+import java.util.Map;
+
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -14,8 +11,13 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.util.HashMap;
-import java.util.Map;
+import com.tpo.suby.dto.request.fine.PayFineRequest;
+import com.tpo.suby.dto.response.fine.FineResponse;
+import com.tpo.suby.exception.NotFoundException;
+import com.tpo.suby.exception.PaymentRequiredException;
+import com.tpo.suby.service.FineService;
+
+import lombok.RequiredArgsConstructor;
 
 @RestController
 @RequestMapping("/api/v1/users/{userId}/fines")

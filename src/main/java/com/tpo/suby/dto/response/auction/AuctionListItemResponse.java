@@ -1,11 +1,12 @@
 package com.tpo.suby.dto.response.auction;
 
-import com.fasterxml.jackson.annotation.JsonProperty;
-import lombok.Builder;
-import lombok.Getter;
-
 import java.time.LocalDate;
 import java.time.LocalTime;
+
+import com.fasterxml.jackson.annotation.JsonProperty;
+
+import lombok.Builder;
+import lombok.Getter;
 
 @Getter
 @Builder
@@ -16,6 +17,7 @@ public class AuctionListItemResponse {
     private String name;
 
     private String category;
+
 
     private LocalDate date;
 

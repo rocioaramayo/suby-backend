@@ -1,17 +1,19 @@
 package com.tpo.suby.service;
 
-import com.tpo.suby.dto.response.fine.FineResponse;
-import com.tpo.suby.exception.NotFoundException;
-import com.tpo.suby.exception.PaymentRequiredException;
-import lombok.RequiredArgsConstructor;
+import java.math.BigDecimal;
+import java.util.List;
+import java.util.Map;
+
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.math.BigDecimal;
-import java.util.List;
-import java.util.Map;
+import com.tpo.suby.dto.response.fine.FineResponse;
+import com.tpo.suby.exception.NotFoundException;
+import com.tpo.suby.exception.PaymentRequiredException;
+
+import lombok.RequiredArgsConstructor;
 
 @Service
 @RequiredArgsConstructor
