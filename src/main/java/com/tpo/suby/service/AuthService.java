@@ -1,11 +1,15 @@
 package com.tpo.suby.service;
 
+import com.tpo.suby.dto.request.admin.ApproveUserOnboardingRequest;
+import com.tpo.suby.dto.request.admin.RejectUserOnboardingRequest;
 import com.tpo.suby.dto.request.ForgotPasswordRequest;
 import com.tpo.suby.dto.request.LoginRequest;
 import com.tpo.suby.dto.request.OnboardingRequest;
 import com.tpo.suby.dto.request.ResetPasswordRequest;
 import com.tpo.suby.dto.request.VerifyCodeRequest;
 import com.tpo.suby.dto.response.ApiResponse;
+import com.tpo.suby.dto.response.admin.AdminUserRequestItemResponse;
+import com.tpo.suby.dto.response.admin.AdminUserRequestListResponse;
 import com.tpo.suby.config.JwtService;
 import com.tpo.suby.entity.OnboardingUsuario;
 import com.tpo.suby.entity.Persona;
@@ -25,6 +29,7 @@ import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.LockedException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Sort;
 import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.mail.SimpleMailMessage;
@@ -50,6 +55,7 @@ import java.util.UUID;
 public class AuthService {
 
     private static final Logger log = LoggerFactory.getLogger(AuthService.class);
+    private static final String ADMIN_EMAIL = "admin@suby.com";
 
     private final UsuarioAppRepository usuarioRepository;
     private final OnboardingUsuarioRepository onboardingUsuarioRepository;
@@ -62,6 +68,122 @@ public class AuthService {
     private final PrivateMessageService privateMessageService;
 
     private final JwtService jwtService;
+
+    public AdminUserRequestListResponse listAdminUserRequests() {
+        validateAdminAccess();
+
+        List<AdminUserRequestItemResponse> requests = onboardingUsuarioRepository.findAll(Sort.by(Sort.Direction.DESC, "fechaSolicitud"))
+                .stream()
+                .map(request -> AdminUserRequestItemResponse.builder()
+                        .requestId(request.getIdentificador())
+                        .name(request.getNombre())
+                        .surname(request.getApellido())
+                        .email(request.getEmail())
+                        .document(request.getDocumento())
+                        .country(request.getPais())
+                        .legalAddress(request.getDireccionLegal())
+                        .status(normalizeOnboardingStatus(request.getEstado()))
+                        .requestedAt(request.getFechaSolicitud())
+                        .rejectionReason(request.getMotivoRechazo())
+                        .build())
+                .toList();
+
+        int pending = (int) requests.stream().filter(request -> "pendiente".equalsIgnoreCase(request.getStatus())).count();
+        int rejected = (int) requests.stream().filter(request -> "rechazado".equalsIgnoreCase(request.getStatus())).count();
+        int processed = (int) requests.stream().filter(request -> "procesado".equalsIgnoreCase(request.getStatus())).count();
+
+        return AdminUserRequestListResponse.builder()
+                .requests(requests)
+                .total(requests.size())
+                .pending(pending)
+                .rejected(rejected)
+                .processed(processed)
+                .build();
+    }
+
+    @Transactional
+    public String approveAdminUserRequest(Integer requestId, ApproveUserOnboardingRequest request) {
+        validateAdminAccess();
+
+        OnboardingUsuario onboarding = onboardingUsuarioRepository.findById(requestId)
+                .orElseThrow(() -> new NotFoundException("No encontramos la solicitud indicada."));
+
+        if ("procesado".equalsIgnoreCase(onboarding.getEstado())) {
+            throw new IllegalStateException("La solicitud ya fue aprobada.");
+        }
+
+        String category = normalizeClientCategory(request == null ? null : request.getCategory());
+        Optional<UsuarioApp> usuarioExistente = usuarioRepository.findByEmail(onboarding.getEmail());
+        Persona persona;
+        String tempPassword = null;
+
+        if (usuarioExistente.isPresent()) {
+            persona = usuarioExistente.get().getPersona();
+        } else {
+            tempPassword = UUID.randomUUID().toString().substring(0, 8);
+
+            persona = Persona.builder()
+                    .nombre(("%s %s".formatted(defaultText(onboarding.getNombre(), "Usuario"), defaultText(onboarding.getApellido(), ""))).trim())
+                    .documento(onboarding.getDocumento())
+                    .direccion(onboarding.getDireccionLegal())
+                    .estado("activo")
+                    .build();
+
+            persona = personaRepository.saveAndFlush(persona);
+
+            UsuarioApp usuario = UsuarioApp.builder()
+                    .persona(persona)
+                    .email(onboarding.getEmail())
+                    .passwordHash(passwordEncoder.encode(tempPassword))
+                    .estadoApp("activo")
+                    .ultimoLogin(null)
+                    .intentosFallidos(0)
+                    .bloqueadoHasta(null)
+                    .build();
+
+            usuarioRepository.saveAndFlush(usuario);
+        }
+
+        createOrUpdateClientProfile(persona.getIdentificador(), onboarding.getPais(), category);
+
+        privateMessageService.createPrivateMessage(
+                persona.getIdentificador(),
+                "cuenta_aprobada",
+                "Cuenta aprobada",
+                "Tu solicitud fue aprobada y ya podés ingresar a Suby.",
+                approvalMessageData(onboarding.getNombre(), category)
+        );
+
+        onboarding.setEstado("procesado");
+        onboarding.setMotivoRechazo(null);
+        onboardingUsuarioRepository.save(onboarding);
+        sendApprovalEmail(onboarding, tempPassword, category);
+
+        return "La solicitud fue aprobada con categoría " + category + ".";
+    }
+
+    @Transactional
+    public String rejectAdminUserRequest(Integer requestId, RejectUserOnboardingRequest request) {
+        validateAdminAccess();
+
+        OnboardingUsuario onboarding = onboardingUsuarioRepository.findById(requestId)
+                .orElseThrow(() -> new NotFoundException("No encontramos la solicitud indicada."));
+
+        if ("procesado".equalsIgnoreCase(onboarding.getEstado())) {
+            throw new IllegalStateException("La solicitud ya fue aprobada y no puede rechazarse.");
+        }
+
+        String reason = request != null && request.getReason() != null && !request.getReason().isBlank()
+                ? request.getReason().trim()
+                : "La documentación enviada no alcanzó para autorizar la cuenta.";
+
+        onboarding.setEstado("rechazado");
+        onboarding.setMotivoRechazo(reason);
+        onboardingUsuarioRepository.save(onboarding);
+        sendRejectionEmail(onboarding, reason);
+
+        return "La solicitud fue rechazada.";
+    }
 
     public Map<String, Object> logout(String token) {
         if (token == null || token.isBlank()) {
@@ -404,7 +526,7 @@ Equipo Suby
                         "cuenta_aprobada",
                         "Bienvenido a Suby",
                         "Tu solicitud de registro fue aprobada correctamente. Ya podés ingresar a Suby.",
-                        approvalMessageData(onboarding.getNombre())
+                        approvalMessageData(onboarding.getNombre(), "comun")
                 );
 
                 // Mark onboarding as processed before sending email to avoid duplicates.
@@ -452,18 +574,32 @@ Equipo Suby
     }
 
     private void createClientProfile(Integer personId, String country) {
+        createOrUpdateClientProfile(personId, country, "comun");
+    }
+
+    private void createOrUpdateClientProfile(Integer personId, String country, String category) {
+        Integer countryId = resolveCountryId(country);
+        Integer employeeId = firstEmployeeId();
+        String normalizedCategory = normalizeClientCategory(category);
+
         if (clientExists(personId)) {
+            jdbcTemplate.update("""
+                    UPDATE clientes
+                    SET numeroPais = ?,
+                        admitido = 'si',
+                        categoria = ?,
+                        verificador = ?
+                    WHERE identificador = ?
+                    """, countryId, normalizedCategory, employeeId, personId);
             return;
         }
-
-        Integer countryId = resolveCountryId(country);
 
         jdbcTemplate.update("""
                 INSERT INTO clientes (
                     identificador, numeroPais, admitido, categoria, verificador
                 )
                 VALUES (?, ?, ?, ?, ?)
-                """, personId, countryId, "si", "comun", firstEmployeeId());
+                """, personId, countryId, "si", normalizedCategory, employeeId);
     }
 
     private boolean clientExists(Integer personId) {
@@ -530,7 +666,7 @@ Equipo Suby
         return normalized.toLowerCase();
     }
 
-    private Map<String, String> approvalMessageData(String firstName) {
+    private Map<String, String> approvalMessageData(String firstName, String category) {
         Map<String, String> data = new LinkedHashMap<>();
         data.put("headline", "Bienvenido a Suby");
         data.put("greeting", "¡Bienvenido a Suby, la plataforma de subastas más exclusiva!");
@@ -539,10 +675,118 @@ Equipo Suby
         data.put("step_1", "Completá tu perfil y agregá medios de pago.");
         data.put("step_2", "Explorá las subastas activas y próximas.");
         data.put("step_3", "Pujá en los artículos que te interesen.");
-        data.put("category_title", "Categorías de usuario");
-        data.put("category_body", "Comenzás como usuario Común. A medida que participás en subastas y agregás medios de pago, podés ascender a categorías superiores.");
+        data.put("category_title", "Categoría asignada");
+        data.put("category_body", "Tu categoría fue asignada manualmente por el equipo de Suby: " + normalizeClientCategory(category) + ".");
         data.put("cta_label", "Ir al inicio");
         data.put("cta_target", "/home");
         return data;
+    }
+
+    private void validateAdminAccess() {
+        org.springframework.security.core.Authentication authentication =
+                org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication();
+        if (authentication == null || !authentication.isAuthenticated()
+                || "anonymousUser".equals(authentication.getPrincipal())) {
+            throw new org.springframework.security.access.AccessDeniedException("No autorizado.");
+        }
+
+        UsuarioApp user = usuarioRepository.findByEmail(authentication.getName())
+                .orElseThrow(() -> new NotFoundException("Usuario no encontrado."));
+
+        if (ADMIN_EMAIL.equalsIgnoreCase(user.getEmail())) {
+            return;
+        }
+
+        Integer employeeCount = jdbcTemplate.queryForObject("""
+                SELECT COUNT(*)
+                FROM empleados
+                WHERE identificador = ?
+                """, Integer.class, user.getIdentificador());
+
+        if (employeeCount == null || employeeCount == 0) {
+            throw new org.springframework.security.access.AccessDeniedException("No autorizado.");
+        }
+    }
+
+    private String normalizeOnboardingStatus(String status) {
+        return status == null || status.isBlank() ? "pendiente" : status.trim().toLowerCase();
+    }
+
+    private String normalizeClientCategory(String category) {
+        String normalized = normalize(category);
+        return switch (normalized) {
+            case "especial", "plata", "oro", "platino" -> normalized;
+            default -> "comun";
+        };
+    }
+
+    private String defaultText(String value, String fallback) {
+        return value == null || value.isBlank() ? fallback : value.trim();
+    }
+
+    private void sendApprovalEmail(OnboardingUsuario onboarding, String tempPassword, String category) {
+        SimpleMailMessage message = new SimpleMailMessage();
+        message.setFrom("rocioaramay@gmail.com");
+        message.setTo(onboarding.getEmail());
+        message.setSubject("Cuenta aprobada - Suby");
+        message.setText(tempPassword == null
+                ? """
+Hola %s,
+
+Tu solicitud fue aprobada correctamente.
+
+El equipo de Suby te asignó la categoría %s.
+
+Saludos,
+Equipo Suby
+""".formatted(onboarding.getNombre(), normalizeClientCategory(category))
+                : """
+Hola %s,
+
+Tu solicitud fue aprobada correctamente.
+
+El equipo de Suby te asignó la categoría %s.
+
+Ya podés ingresar a Suby utilizando las siguientes credenciales temporales:
+
+Email: %s
+Contraseña temporal: %s
+
+Por seguridad, al iniciar sesión por primera vez se te solicitará cambiar la contraseña.
+
+Saludos,
+Equipo Suby
+""".formatted(onboarding.getNombre(), normalizeClientCategory(category), onboarding.getEmail(), tempPassword));
+
+        try {
+            mailSender.send(message);
+        } catch (Exception e) {
+            log.warn("Failed to send admin approval email to {}", onboarding.getEmail(), e);
+        }
+    }
+
+    private void sendRejectionEmail(OnboardingUsuario onboarding, String reason) {
+        SimpleMailMessage message = new SimpleMailMessage();
+        message.setFrom("rocioaramay@gmail.com");
+        message.setTo(onboarding.getEmail());
+        message.setSubject("Solicitud rechazada - Suby");
+        message.setText("""
+Hola %s,
+
+Tu solicitud no pudo ser aprobada.
+
+Motivo: %s
+
+Si querés, podés volver a enviar la documentación con la información corregida.
+
+Saludos,
+Equipo Suby
+""".formatted(onboarding.getNombre(), reason));
+
+        try {
+            mailSender.send(message);
+        } catch (Exception e) {
+            log.warn("Failed to send rejection email to {}", onboarding.getEmail(), e);
+        }
     }
 }

@@ -186,7 +186,6 @@ public class UserService {
                     rs.getInt("payment_types_registered")
             ), usuarioLogueado.getIdentificador());
 
-            CategoryRule nextRule = nextCategoryRule(stats.currentCategory());
             BigDecimal successRate = stats.totalBids() == 0
                     ? BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP)
                     : BigDecimal.valueOf(stats.auctionsWon())
@@ -199,11 +198,11 @@ public class UserService {
                     .auctionsWon(stats.auctionsWon())
                     .categoryProgress(CategoryProgressResponse.builder()
                             .currentCategory(stats.currentCategory())
-                            .nextCategory(nextRule.nextCategory())
+                            .nextCategory(stats.currentCategory())
                             .auctionsWon(stats.auctionsWon())
-                            .auctionsRequired(nextRule.auctionsRequired())
+                            .auctionsRequired(0)
                             .paymentTypesRegistered(stats.paymentTypesRegistered())
-                            .paymentTypesRequired(nextRule.paymentTypesRequired())
+                            .paymentTypesRequired(0)
                             .build())
                     .build();
         } catch (EmptyResultDataAccessException ex) {
@@ -234,16 +233,6 @@ public class UserService {
         return usuarioLogueado;
     }
 
-    private CategoryRule nextCategoryRule(String currentCategory) {
-        return switch (normalizeCategory(currentCategory)) {
-            case "especial" -> new CategoryRule("plata", 3, 1);
-            case "plata" -> new CategoryRule("oro", 5, 2);
-            case "oro" -> new CategoryRule("platino", 10, 3);
-            case "platino" -> new CategoryRule("platino", 10, 3);
-            default -> new CategoryRule("especial", 1, 1);
-        };
-    }
-
     private String normalizeCategory(String category) {
         return category == null ? "comun" : category.trim().toLowerCase();
     }
@@ -257,10 +246,4 @@ public class UserService {
     ) {
     }
 
-    private record CategoryRule(
-            String nextCategory,
-            Integer auctionsRequired,
-            Integer paymentTypesRequired
-    ) {
-    }
 }

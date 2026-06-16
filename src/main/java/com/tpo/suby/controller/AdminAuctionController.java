@@ -1,18 +1,23 @@
 package com.tpo.suby.controller;
 
+import com.tpo.suby.dto.request.admin.ApproveUserOnboardingRequest;
 import com.tpo.suby.dto.request.admin.CreateAuctionRequest;
 import com.tpo.suby.dto.request.admin.ProposeProductRequest;
+import com.tpo.suby.dto.request.admin.RejectUserOnboardingRequest;
 import com.tpo.suby.dto.request.admin.RejectProductRequest;
 import com.tpo.suby.dto.response.ApiResponse;
 import com.tpo.suby.dto.response.admin.AdminAuctionCreationResponse;
 import com.tpo.suby.dto.response.admin.AdminProductReviewResponse;
 import com.tpo.suby.dto.response.admin.AdminSubastadorOptionResponse;
+import com.tpo.suby.dto.response.admin.AdminUserRequestListResponse;
 import com.tpo.suby.exception.OwnerProductValidationException;
 import com.tpo.suby.exception.UnauthorizedException;
 import com.tpo.suby.service.AuctionManagementService;
+import com.tpo.suby.service.AuthService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -29,6 +34,7 @@ import java.util.Map;
 public class AdminAuctionController {
 
     private final AuctionManagementService auctionManagementService;
+    private final AuthService authService;
 
     @GetMapping("/products/review-queue")
     public ResponseEntity<?> listReviewQueue() {
@@ -45,6 +51,39 @@ public class AdminAuctionController {
                 .status("success")
                 .message(auctionManagementService.listSubastadores())
                 .build());
+    }
+
+    @GetMapping("/users/requests")
+    public ResponseEntity<?> listUserRequests() {
+        AdminUserRequestListResponse response = authService.listAdminUserRequests();
+        return ResponseEntity.ok(ApiResponse.<AdminUserRequestListResponse>builder()
+                .status("success")
+                .message(response)
+                .build());
+    }
+
+    @PostMapping("/users/requests/{requestId}/approve")
+    public ResponseEntity<?> approveUserRequest(
+            @PathVariable Integer requestId,
+            @RequestBody(required = false) ApproveUserOnboardingRequest request
+    ) {
+        String message = authService.approveAdminUserRequest(requestId, request);
+        return ResponseEntity.ok(Map.of(
+                "status", "success",
+                "message", message
+        ));
+    }
+
+    @PostMapping("/users/requests/{requestId}/reject")
+    public ResponseEntity<?> rejectUserRequest(
+            @PathVariable Integer requestId,
+            @RequestBody(required = false) RejectUserOnboardingRequest request
+    ) {
+        String message = authService.rejectAdminUserRequest(requestId, request);
+        return ResponseEntity.ok(Map.of(
+                "status", "success",
+                "message", message
+        ));
     }
 
     @PostMapping("/products/{productId}/accept")
@@ -96,9 +135,25 @@ public class AdminAuctionController {
         ));
     }
 
+    @ExceptionHandler(AccessDeniedException.class)
+    public ResponseEntity<?> handleAccessDenied(AccessDeniedException ex) {
+        return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of(
+                "status", "failed",
+                "message", "No autorizado."
+        ));
+    }
+
     @ExceptionHandler(OwnerProductValidationException.class)
     public ResponseEntity<?> handleValidation(OwnerProductValidationException ex) {
         return ResponseEntity.badRequest().body(Map.of(
+                "status", "failed",
+                "message", ex.getMessage()
+        ));
+    }
+
+    @ExceptionHandler(IllegalStateException.class)
+    public ResponseEntity<?> handleIllegalState(IllegalStateException ex) {
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of(
                 "status", "failed",
                 "message", ex.getMessage()
         ));
