@@ -1,12 +1,10 @@
 package com.tpo.suby.controller;
 
-import com.tpo.suby.dto.response.ApiResponse;
-import com.tpo.suby.dto.response.user.OwnerProductsResponse;
-import com.tpo.suby.exception.InsufficientProductPhotosException;
-import com.tpo.suby.exception.OwnerProductValidationException;
-import com.tpo.suby.exception.UnauthorizedException;
-import com.tpo.suby.service.UserProductService;
-import lombok.RequiredArgsConstructor;
+import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+
 import org.springframework.http.CacheControl;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -20,10 +18,14 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-import java.time.LocalDate;
+import com.tpo.suby.dto.response.ApiResponse;
+import com.tpo.suby.dto.response.user.OwnerProductsResponse;
+import com.tpo.suby.exception.InsufficientProductPhotosException;
+import com.tpo.suby.exception.OwnerProductValidationException;
+import com.tpo.suby.exception.UnauthorizedException;
+import com.tpo.suby.service.UserProductService;
+
+import lombok.RequiredArgsConstructor;
 
 @RestController
 @RequestMapping("/api/v1/users/{userId}/products")
@@ -61,6 +63,7 @@ public class UserProductController {
             @PathVariable Integer userId,
             @RequestParam("name") String name,
             @RequestParam("condition") String condition,
+            @RequestParam("category") String category,
             @RequestParam("origin_provenance") String originProvenance,
             @RequestParam("full_description") String fullDescription,
             @RequestParam("insurance_policy") String insurancePolicy,
@@ -79,6 +82,7 @@ public class UserProductController {
                 userId,
                 name,
                 condition,
+                category,
                 originProvenance,
                 fullDescription,
                 insurancePolicy,

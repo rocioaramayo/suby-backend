@@ -1,14 +1,13 @@
 package com.tpo.suby.service;
 
-import com.tpo.suby.dto.response.user.OwnerProductDepositResponse;
-import com.tpo.suby.dto.response.user.OwnerProductItemResponse;
-import com.tpo.suby.dto.response.user.OwnerProductsResponse;
-import com.tpo.suby.entity.UsuarioApp;
-import com.tpo.suby.exception.InsufficientProductPhotosException;
-import com.tpo.suby.exception.OwnerProductValidationException;
-import com.tpo.suby.exception.UnauthorizedException;
-import com.tpo.suby.repository.UsuarioAppRepository;
-import lombok.RequiredArgsConstructor;
+import java.io.IOException;
+import java.sql.Date;
+import java.sql.PreparedStatement;
+import java.sql.Statement;
+import java.time.LocalDate;
+import java.util.List;
+import java.util.Locale;
+
 import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.support.GeneratedKeyHolder;
@@ -19,14 +18,16 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
-import java.io.IOException;
-import java.math.BigDecimal;
-import java.sql.Date;
-import java.sql.PreparedStatement;
-import java.sql.Statement;
-import java.time.LocalDate;
-import java.util.List;
-import java.util.Locale;
+import com.tpo.suby.dto.response.user.OwnerProductDepositResponse;
+import com.tpo.suby.dto.response.user.OwnerProductItemResponse;
+import com.tpo.suby.dto.response.user.OwnerProductsResponse;
+import com.tpo.suby.entity.UsuarioApp;
+import com.tpo.suby.exception.InsufficientProductPhotosException;
+import com.tpo.suby.exception.OwnerProductValidationException;
+import com.tpo.suby.exception.UnauthorizedException;
+import com.tpo.suby.repository.UsuarioAppRepository;
+
+import lombok.RequiredArgsConstructor;
 
 @Service
 @RequiredArgsConstructor
@@ -121,6 +122,7 @@ public class UserProductService {
             Integer userId,
             String name,
             String condition,
+            String category,
             String originProvenance,
             String fullDescription,
             String insurancePolicy,
@@ -137,6 +139,7 @@ public class UserProductService {
 
         if (isBlank(name)
                 || isBlank(condition)
+                || isBlank(category)
                 || isBlank(originProvenance)
                 || isBlank(fullDescription)
                 || isBlank(insurancePolicy)
@@ -147,6 +150,7 @@ public class UserProductService {
             throw new OwnerProductValidationException("Invalid owner product request.");
         }
 
+        System.out.println(insurancePolicy);
         validatePhotos(photos);
         ensureInsuranceExists(insurancePolicy);
         ensureOwnerProfileExists(userId);
@@ -165,11 +169,11 @@ public class UserProductService {
         jdbcTemplate.update("""
                 INSERT INTO productos_detalle (
                     identificador, titulo, descripcionLarga, artista,
-                    fechaCreacion, historia, esObraDeArte
+                    fechaCreacion, historia, esObraDeArte,categoriaTematica
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?,?)
                 """, productId, name, fullDescription, nullableTrim(artist), creationDate,
-                buildHistory(originProvenance, historicalContext), normalizeArtFlag(isArt, name, fullDescription));
+                buildHistory(originProvenance, historicalContext), normalizeArtFlag(isArt, name, fullDescription),category);
 
         for (MultipartFile photo : photos) {
             insertPhoto(productId, photo);
