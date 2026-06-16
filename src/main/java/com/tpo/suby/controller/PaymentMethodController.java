@@ -69,7 +69,9 @@ public class PaymentMethodController {
         return ResponseEntity.badRequest().body(
                 Map.of(
                         "status", "failed",
-                        "message", "Error de validación: los datos del medio de pago son incorrectos."
+                        "message", ex instanceof PaymentMethodValidationException paymentMethodValidationException
+                                ? paymentMethodValidationException.getMessage()
+                                : "Error de validación: los datos del medio de pago son incorrectos."
                 )
         );
     }

@@ -4,17 +4,10 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.Getter;
 import lombok.Setter;
 
-import java.math.BigDecimal;
-
 @Getter
 @Setter
-public class BidRequest {
-
-    @JsonProperty("attendee_id")
-    private Integer attendeeId;
+public class AttendeeRegistrationRequest {
 
     @JsonProperty("payment_method_id")
     private Integer paymentMethodId;
-
-    private BigDecimal amount;
 }

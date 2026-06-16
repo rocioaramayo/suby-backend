@@ -1,5 +1,6 @@
 package com.tpo.suby.service;
 
+import com.tpo.suby.dto.request.bid.AttendeeRegistrationRequest;
 import com.tpo.suby.dto.request.bid.BidRequest;
 import com.tpo.suby.dto.response.bid.AttendeeRegistrationResponse;
 import com.tpo.suby.dto.response.bid.BidResponse;
@@ -14,6 +15,7 @@ import com.tpo.suby.exception.BidRestrictedException;
 import com.tpo.suby.exception.BidResultNotFoundException;
 import com.tpo.suby.exception.InsufficientBalanceException;
 import com.tpo.suby.exception.InvalidBidAmountException;
+import com.tpo.suby.exception.MissingPaymentMethodException;
 import com.tpo.suby.exception.NotFoundException;
 import com.tpo.suby.exception.UnauthorizedException;
 import com.tpo.suby.repository.UsuarioAppRepository;
@@ -52,7 +54,7 @@ public class BidRoomService {
     private final AuctionLotStateService auctionLotStateService;
 
     @Transactional
-    public AttendeeRegistrationResponse registerAttendee(Integer auctionId) {
+    public AttendeeRegistrationResponse registerAttendee(Integer auctionId, AttendeeRegistrationRequest request) {
         if (auctionId == null || auctionId <= 0) {
             throw new NotFoundException("Subasta no encontrada.");
         }
@@ -72,6 +74,11 @@ public class BidRoomService {
 
         ensureSingleActiveAuctionSession(user.getIdentificador(), auction.id());
 
+        Integer paymentMethodId = request == null ? null : request.getPaymentMethodId();
+        if (paymentMethodId == null || paymentMethodId <= 0) {
+            throw new MissingPaymentMethodException("Elegí un medio de pago antes de ingresar a la subasta.");
+        }
+
         if (categoryRank(auction.category()) > categoryRank(client.category())) {
             upsertActiveSession(user.getIdentificador(), auction.id());
             return observerAccess(
@@ -81,18 +88,19 @@ public class BidRoomService {
             );
         }
 
-        if (!hasVerifiedPaymentMethod(client.id(), auction.id(), auction.currency())) {
+        PaymentMethodState selectedPaymentMethod = paymentMethodState(client.id(), paymentMethodId, auction.id(), auction.currency());
+        if (!selectedPaymentMethod.canBid()) {
             upsertActiveSession(user.getIdentificador(), auction.id());
             return observerAccess(
                     auctionId,
                     client.id(),
-                    "Necesitas registrar un medio de pago verificado para pujar. Podes ingresar como observador."
+                    selectedPaymentMethod.readOnlyReason()
             );
         }
 
         if (attendeeExists(auctionId, client.id())) {
             upsertActiveSession(user.getIdentificador(), auction.id());
-            return existingAttendee(auctionId, client.id());
+            return existingAttendee(auctionId, client.id(), paymentMethodId);
         }
 
         Integer bidderNumber = nextBidderNumber(auctionId);
@@ -107,6 +115,7 @@ public class BidRoomService {
                 .accessMode("bidder")
                 .canBid(true)
                 .readOnlyReason(null)
+                .paymentMethodId(paymentMethodId)
                 .build();
     }
 
@@ -117,6 +126,9 @@ public class BidRoomService {
         }
         if (request == null || request.getAttendeeId() == null || request.getAmount() == null) {
             throw invalidAmount(BigDecimal.ZERO, BigDecimal.ZERO);
+        }
+        if (request.getPaymentMethodId() == null || request.getPaymentMethodId() <= 0) {
+            throw new MissingPaymentMethodException("Elegí un medio de pago antes de pujar.");
         }
 
         UsuarioApp user = authenticatedUser();
@@ -154,7 +166,8 @@ public class BidRoomService {
             throw invalidAmount(minimum, maximum);
         }
 
-        if (!hasEligibleFundingSource(client.id(), auction.id(), auction.currency(), amount)) {
+        PaymentMethodState paymentMethod = paymentMethodState(client.id(), request.getPaymentMethodId(), auction.id(), auction.currency());
+        if (!paymentMethod.canBid() || !paymentMethod.hasFundsFor(amount)) {
             throw new InsufficientBalanceException("Insufficient balance.");
         }
 
@@ -436,33 +449,64 @@ public class BidRoomService {
         return count != null && count > 0;
     }
 
-    private boolean hasVerifiedPaymentMethod(Integer clientId, Integer auctionId, String auctionCurrency) {
-        Integer count = jdbcTemplate.queryForObject("""
-                SELECT COUNT(*)
-                FROM mediosDePago mdp
-                LEFT JOIN tarjetasCredito tc ON tc.identificador = mdp.identificador
-                LEFT JOIN chequesCertificados cc ON cc.identificador = mdp.identificador
-                WHERE mdp.cliente = ?
-                  AND mdp.estado = 'verificado'
-                  AND (
-                        mdp.tipo = 'tarjeta_credito'
-                        OR (
-                            mdp.tipo = 'cuenta_bancaria'
-                            AND mdp.moneda = ?
-                        )
-                        OR (
-                            mdp.tipo = 'cheque_certificado'
-                            AND mdp.moneda = ?
-                            AND (cc.subasta IS NULL OR cc.subasta = ?)
-                        )
-                  )
-                  AND (
-                        ? = 'ARS'
-                        OR mdp.tipo <> 'tarjeta_credito'
-                        OR COALESCE(tc.esInternacional, 'no') = 'si'
-                  )
-                """, Integer.class, clientId, auctionCurrency, auctionCurrency, auctionId, auctionCurrency);
-        return count != null && count > 0;
+    private PaymentMethodState paymentMethodState(Integer clientId, Integer paymentMethodId, Integer auctionId, String auctionCurrency) {
+        try {
+            return jdbcTemplate.queryForObject("""
+                    SELECT
+                        mdp.identificador AS payment_method_id,
+                        mdp.tipo AS db_type,
+                        mdp.estado AS status,
+                        mdp.moneda AS currency,
+                        COALESCE(mdp.montoDisponible, 0) AS available_amount,
+                        COALESCE(mdp.montoUsado, 0) AS used_amount,
+                        COALESCE(tc.esInternacional, 'no') AS international_card,
+                        cc.subasta AS check_auction_id
+                    FROM mediosDePago mdp
+                    LEFT JOIN tarjetasCredito tc ON tc.identificador = mdp.identificador
+                    LEFT JOIN chequesCertificados cc ON cc.identificador = mdp.identificador
+                    WHERE mdp.identificador = ?
+                      AND mdp.cliente = ?
+                    """, (rs, rowNum) -> {
+                String dbType = rs.getString("db_type");
+                String status = rs.getString("status");
+                String currency = rs.getString("currency");
+                BigDecimal availableAmount = rs.getBigDecimal("available_amount");
+                BigDecimal usedAmount = rs.getBigDecimal("used_amount");
+                boolean verified = "verificado".equalsIgnoreCase(status);
+                boolean compatibleCurrency = "tarjeta_credito".equals(dbType) || auctionCurrency.equalsIgnoreCase(currency);
+                Integer checkAuctionId = nullableInt(rs, "check_auction_id");
+                boolean compatibleAuction = !"cheque_certificado".equals(dbType)
+                        || checkAuctionId == null
+                        || checkAuctionId.equals(auctionId);
+                boolean internationalCompatible = !"tarjeta_credito".equals(dbType)
+                        || "ARS".equalsIgnoreCase(auctionCurrency)
+                        || "si".equalsIgnoreCase(rs.getString("international_card"));
+
+                boolean canBid = verified && compatibleCurrency && compatibleAuction && internationalCompatible;
+                String reason = null;
+                if (!verified) {
+                    reason = "Tu medio de pago todavía no fue verificado por el administrador.";
+                } else if (!compatibleCurrency) {
+                    reason = "El medio de pago elegido no opera en la moneda de esta subasta.";
+                } else if (!compatibleAuction) {
+                    reason = "El cheque certificado elegido pertenece a otra subasta.";
+                } else if (!internationalCompatible) {
+                    reason = "La tarjeta elegida no está habilitada para esta subasta en USD.";
+                }
+
+                return new PaymentMethodState(
+                        rs.getInt("payment_method_id"),
+                        dbType,
+                        status,
+                        availableAmount,
+                        usedAmount,
+                        canBid,
+                        reason
+                );
+            }, paymentMethodId, clientId);
+        } catch (EmptyResultDataAccessException ex) {
+            throw new MissingPaymentMethodException("El medio de pago seleccionado no existe en tu cuenta.");
+        }
     }
 
     private boolean hasBidRestrictions(UsuarioApp user, Integer clientId) {
@@ -486,41 +530,6 @@ public class BidRoomService {
                 WHERE item = ?
                 """, BigDecimal.class, itemId);
         return latest == null ? basePrice : latest;
-    }
-
-    private boolean hasEligibleFundingSource(Integer clientId, Integer auctionId, String auctionCurrency, BigDecimal amount) {
-        Integer compatibleCardCount = jdbcTemplate.queryForObject("""
-                SELECT COUNT(*)
-                FROM mediosDePago mdp
-                LEFT JOIN tarjetasCredito tc ON tc.identificador = mdp.identificador
-                WHERE mdp.cliente = ?
-                  AND mdp.estado = 'verificado'
-                  AND mdp.tipo = 'tarjeta_credito'
-                  AND (
-                        ? = 'ARS'
-                        OR COALESCE(tc.esInternacional, 'no') = 'si'
-                  )
-                """, Integer.class, clientId, auctionCurrency);
-        if (compatibleCardCount != null && compatibleCardCount > 0) {
-            return true;
-        }
-
-        Integer fundedMethods = jdbcTemplate.queryForObject("""
-                SELECT COUNT(*)
-                FROM mediosDePago mdp
-                LEFT JOIN chequesCertificados cc ON cc.identificador = mdp.identificador
-                WHERE mdp.cliente = ?
-                  AND mdp.estado = 'verificado'
-                  AND mdp.tipo IN ('cuenta_bancaria', 'cheque_certificado')
-                  AND mdp.moneda = ?
-                  AND (
-                        mdp.tipo <> 'cheque_certificado'
-                        OR cc.subasta IS NULL
-                        OR cc.subasta = ?
-                  )
-                  AND COALESCE(mdp.montoDisponible, 0) - COALESCE(mdp.montoUsado, 0) >= ?
-                """, Integer.class, clientId, auctionCurrency, auctionId, amount);
-        return fundedMethods != null && fundedMethods > 0;
     }
 
     private ActiveSessionInfo activeSession(Integer userId) {
@@ -619,7 +628,7 @@ public class BidRoomService {
         return key.intValue();
     }
 
-    private AttendeeRegistrationResponse existingAttendee(Integer auctionId, Integer clientId) {
+    private AttendeeRegistrationResponse existingAttendee(Integer auctionId, Integer clientId, Integer paymentMethodId) {
         return jdbcTemplate.queryForObject("""
                 SELECT identificador, numeroPostor
                 FROM asistentes
@@ -633,6 +642,7 @@ public class BidRoomService {
                 .accessMode("bidder")
                 .canBid(true)
                 .readOnlyReason(null)
+                .paymentMethodId(paymentMethodId)
                 .build(), auctionId, clientId);
     }
 
@@ -645,6 +655,7 @@ public class BidRoomService {
                 .accessMode("observer")
                 .canBid(false)
                 .readOnlyReason(reason)
+                .paymentMethodId(null)
                 .build();
     }
 
@@ -796,6 +807,23 @@ public class BidRoomService {
     }
 
     private record LotBidInfo(Integer itemId, BigDecimal basePrice, String auctioned, String auctionCategory) {
+    }
+
+    private record PaymentMethodState(
+            Integer id,
+            String dbType,
+            String status,
+            BigDecimal availableAmount,
+            BigDecimal usedAmount,
+            boolean canBid,
+            String readOnlyReason
+    ) {
+        private boolean hasFundsFor(BigDecimal amount) {
+            if ("tarjeta_credito".equals(dbType) || "cuenta_bancaria".equals(dbType) || "cheque_certificado".equals(dbType)) {
+                return availableAmount.subtract(usedAmount).compareTo(amount) >= 0;
+            }
+            return false;
+        }
     }
 
     private record ActiveSessionInfo(

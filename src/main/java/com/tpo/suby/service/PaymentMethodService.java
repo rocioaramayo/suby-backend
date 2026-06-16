@@ -1,6 +1,10 @@
 package com.tpo.suby.service;
 
+import com.tpo.suby.dto.request.admin.ApprovePaymentMethodRequest;
+import com.tpo.suby.dto.request.admin.RejectPaymentMethodRequest;
 import com.tpo.suby.dto.request.payment.PaymentMethodRequest;
+import com.tpo.suby.dto.response.admin.AdminPaymentMethodItemResponse;
+import com.tpo.suby.dto.response.admin.AdminPaymentMethodListResponse;
 import com.tpo.suby.dto.response.payment.CreatedPaymentMethodResponse;
 import com.tpo.suby.dto.response.payment.PaymentMethodItemResponse;
 import com.tpo.suby.dto.response.payment.PaymentMethodsResponse;
@@ -37,6 +41,7 @@ import java.util.Locale;
 public class PaymentMethodService {
 
     private static final DateTimeFormatter CARD_EXPIRY_FORMAT = DateTimeFormatter.ofPattern("MM/yy");
+    private static final String ADMIN_EMAIL = "admin@suby.com";
 
     private final JdbcTemplate jdbcTemplate;
     private final JdbcClient jdbcClient;
@@ -50,13 +55,17 @@ public class PaymentMethodService {
                 SELECT
                     mdp.identificador AS id,
                     mdp.tipo AS db_type,
+                    mdp.estado AS status,
+                    mdp.moneda AS currency,
                     mdp.montoDisponible AS available_balance,
                     mdp.montoUsado AS used_balance,
                     tc.numeroEnmascarado,
                     tc.redTarjeta,
+                    tc.esInternacional,
                     cb.banco AS cuenta_banco,
                     cb.numeroCuenta,
-                    cc.banco AS cheque_banco
+                    cc.banco AS cheque_banco,
+                    cc.subasta AS auction_id
                 FROM mediosDePago mdp
                 LEFT JOIN tarjetasCredito tc ON tc.identificador = mdp.identificador
                 LEFT JOIN cuentasBancarias cb ON cb.identificador = mdp.identificador
@@ -85,7 +94,12 @@ public class PaymentMethodService {
                             rs.getString("numeroCuenta"),
                             rs.getString("cheque_banco")
                     ))
+                    .status(rs.getString("status"))
+                    .currency(rs.getString("currency"))
+                    .internationalCard("si".equalsIgnoreCase(rs.getString("esInternacional")))
+                    .auctionId(nullableInt(rs, "auction_id"))
                     .availableBalance(available.subtract(used))
+                    .reviewNote(buildReviewNote(rs.getString("status"), dbType, available, used))
                     .build();
         }, userId);
 
@@ -111,6 +125,114 @@ public class PaymentMethodService {
         };
     }
 
+    public AdminPaymentMethodListResponse listAdminPaymentMethods() {
+        validateAdminAccess();
+
+        List<AdminPaymentMethodItemResponse> paymentMethods = jdbcTemplate.query("""
+                SELECT
+                    mdp.identificador AS payment_method_id,
+                    mdp.cliente AS user_id,
+                    p.nombre AS user_name,
+                    ua.email AS user_email,
+                    mdp.tipo AS db_type,
+                    mdp.estado AS status,
+                    mdp.moneda AS currency,
+                    mdp.montoDisponible AS available_amount,
+                    mdp.montoUsado AS used_amount,
+                    tc.redTarjeta,
+                    tc.numeroEnmascarado,
+                    cb.banco AS cuenta_banco,
+                    cb.numeroCuenta,
+                    cc.banco AS cheque_banco,
+                    cc.subasta AS auction_id
+                FROM mediosDePago mdp
+                JOIN personas p ON p.identificador = mdp.cliente
+                LEFT JOIN usuarios_app ua ON ua.identificador = mdp.cliente
+                LEFT JOIN tarjetasCredito tc ON tc.identificador = mdp.identificador
+                LEFT JOIN cuentasBancarias cb ON cb.identificador = mdp.identificador
+                LEFT JOIN chequesCertificados cc ON cc.identificador = mdp.identificador
+                ORDER BY
+                    CASE mdp.estado
+                        WHEN 'pendiente' THEN 0
+                        WHEN 'rechazado' THEN 1
+                        ELSE 2
+                    END,
+                    mdp.identificador DESC
+                """, (rs, rowNum) -> {
+            String dbType = rs.getString("db_type");
+            BigDecimal available = rs.getBigDecimal("available_amount");
+            BigDecimal used = rs.getBigDecimal("used_amount");
+            if (available == null) {
+                available = BigDecimal.ZERO;
+            }
+            if (used == null) {
+                used = BigDecimal.ZERO;
+            }
+
+            Integer auctionId = nullableInt(rs, "auction_id");
+            return AdminPaymentMethodItemResponse.builder()
+                    .paymentMethodId(rs.getInt("payment_method_id"))
+                    .userId(rs.getInt("user_id"))
+                    .userName(rs.getString("user_name"))
+                    .userEmail(rs.getString("user_email"))
+                    .type(toApiType(dbType))
+                    .label(buildLabel(
+                            dbType,
+                            rs.getString("redTarjeta"),
+                            rs.getString("numeroEnmascarado"),
+                            rs.getString("cuenta_banco"),
+                            rs.getString("numeroCuenta"),
+                            rs.getString("cheque_banco")
+                    ))
+                    .status(rs.getString("status"))
+                    .currency(rs.getString("currency"))
+                    .declaredAmount(available)
+                    .approvedAmount(available.subtract(used))
+                    .auctionId(auctionId)
+                    .auctionLabel(auctionId == null ? null : "Subasta #" + auctionId)
+                    .reviewReason(buildReviewNote(rs.getString("status"), dbType, available, used))
+                    .build();
+        });
+
+        return AdminPaymentMethodListResponse.builder()
+                .paymentMethods(paymentMethods)
+                .build();
+    }
+
+    @Transactional
+    public void approvePaymentMethod(Integer paymentMethodId, ApprovePaymentMethodRequest request) {
+        validateAdminAccess();
+        PaymentMethodAdminState paymentMethod = adminPaymentMethodState(paymentMethodId);
+
+        BigDecimal approvedAmount = paymentMethod.availableAmount();
+        if ("tarjeta_credito".equals(paymentMethod.dbType())) {
+            approvedAmount = request == null ? null : request.getApprovedAmount();
+            if (approvedAmount == null || approvedAmount.compareTo(BigDecimal.ZERO) <= 0) {
+                throw new PaymentMethodValidationException("Invalid approved amount.");
+            }
+        }
+
+        jdbcTemplate.update("""
+                UPDATE mediosDePago
+                SET estado = 'verificado',
+                    montoDisponible = ?
+                WHERE identificador = ?
+                """, approvedAmount, paymentMethodId);
+    }
+
+    @Transactional
+    public void rejectPaymentMethod(Integer paymentMethodId, RejectPaymentMethodRequest request) {
+        validateAdminAccess();
+        adminPaymentMethodState(paymentMethodId);
+        jdbcTemplate.update("""
+                UPDATE mediosDePago
+                SET estado = 'rechazado',
+                    montoDisponible = 0,
+                    montoUsado = 0
+                WHERE identificador = ?
+                """, paymentMethodId);
+    }
+
     private CreatedPaymentMethodResponse addCard(Integer userId, PaymentMethodRequest request) {
         if (!isValidCard(request)) {
             throw new PaymentMethodValidationException("Invalid card.");
@@ -131,7 +253,7 @@ public class PaymentMethodService {
         Integer paymentMethodId = insertPaymentMethod(
                 userId,
                 "tarjeta_credito",
-                "verificado",
+                "pendiente",
                 normalizeCurrency(request.getCurrency(), "ARS"),
                 BigDecimal.ZERO,
                 cardExpirationDate(request.getExpiry())
@@ -174,7 +296,7 @@ public class PaymentMethodService {
         Integer paymentMethodId = insertPaymentMethod(
                 userId,
                 "cuenta_bancaria",
-                "verificado",
+                "pendiente",
                 normalizeCurrency(request.getCurrency(), defaultCurrencyForBank(request)),
                 positiveOrZero(request.getReservedAmount()),
                 null
@@ -306,6 +428,25 @@ public class PaymentMethodService {
 
         if (!exists("SELECT COUNT(*) FROM clientes WHERE identificador = ?", userId)) {
             throw new PaymentMethodValidationException("Invalid client.");
+        }
+    }
+
+    private void validateAdminAccess() {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        if (authentication == null || !authentication.isAuthenticated()
+                || "anonymousUser".equals(authentication.getPrincipal())) {
+            throw new UnauthorizedException("No autorizado.");
+        }
+
+        String email = authentication.getName();
+        if (ADMIN_EMAIL.equalsIgnoreCase(email)) {
+            return;
+        }
+
+        UsuarioApp user = usuarioAppRepository.findByEmail(email)
+                .orElseThrow(() -> new UnauthorizedException("No autorizado."));
+        if (!exists("SELECT COUNT(*) FROM empleados WHERE identificador = ?", user.getIdentificador())) {
+            throw new UnauthorizedException("No autorizado.");
         }
     }
 
@@ -490,6 +631,32 @@ public class PaymentMethodService {
         return count != null && count > 0;
     }
 
+    private PaymentMethodAdminState adminPaymentMethodState(Integer paymentMethodId) {
+        if (paymentMethodId == null || paymentMethodId <= 0) {
+            throw new PaymentMethodValidationException("Invalid payment method.");
+        }
+
+        try {
+            return jdbcTemplate.queryForObject("""
+                    SELECT identificador, tipo, estado, montoDisponible
+                    FROM mediosDePago
+                    WHERE identificador = ?
+                    """, (rs, rowNum) -> new PaymentMethodAdminState(
+                    rs.getInt("identificador"),
+                    rs.getString("tipo"),
+                    rs.getString("estado"),
+                    rs.getBigDecimal("montoDisponible") == null ? BigDecimal.ZERO : rs.getBigDecimal("montoDisponible")
+            ), paymentMethodId);
+        } catch (EmptyResultDataAccessException ex) {
+            throw new PaymentMethodValidationException("Invalid payment method.");
+        }
+    }
+
+    private Integer nullableInt(java.sql.ResultSet rs, String column) throws java.sql.SQLException {
+        int value = rs.getInt(column);
+        return rs.wasNull() ? null : value;
+    }
+
     private String toApiType(String dbType) {
         return switch (dbType) {
             case "tarjeta_credito" -> "tarjeta";
@@ -505,6 +672,26 @@ public class PaymentMethodService {
             case "cheque_certificado" -> "Cheque certificado - %s".formatted(checkBank == null ? "Pendiente" : checkBank);
             default -> "Medio de pago";
         };
+    }
+
+    private String buildReviewNote(String status, String dbType, BigDecimal available, BigDecimal used) {
+        String normalizedStatus = normalize(status);
+        if ("pendiente".equals(normalizedStatus)) {
+            return "tarjeta_credito".equals(dbType)
+                    ? "Pendiente de validación del límite por parte del administrador."
+                    : "Pendiente de revisión administrativa.";
+        }
+        if ("rechazado".equals(normalizedStatus)) {
+            return "Este medio de pago fue rechazado por el administrador.";
+        }
+
+        BigDecimal approved = (available == null ? BigDecimal.ZERO : available)
+                .subtract(used == null ? BigDecimal.ZERO : used)
+                .max(BigDecimal.ZERO);
+        if ("tarjeta_credito".equals(dbType)) {
+            return "Límite autorizado: US$ %s".formatted(approved.toPlainString());
+        }
+        return "Medio de pago verificado y habilitado para pujar.";
     }
 
     private String cardLabel(String brand, String masked) {
@@ -580,5 +767,13 @@ public class PaymentMethodService {
             return "";
         }
         return value.substring(0, 1).toUpperCase(Locale.ROOT) + value.substring(1).toLowerCase(Locale.ROOT);
+    }
+
+    private record PaymentMethodAdminState(
+            Integer id,
+            String dbType,
+            String status,
+            BigDecimal availableAmount
+    ) {
     }
 }

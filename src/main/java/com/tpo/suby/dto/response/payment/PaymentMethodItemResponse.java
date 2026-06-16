@@ -16,6 +16,19 @@ public class PaymentMethodItemResponse {
 
     private String label;
 
+    private String status;
+
+    private String currency;
+
+    @JsonProperty("international_card")
+    private Boolean internationalCard;
+
+    @JsonProperty("auction_id")
+    private Integer auctionId;
+
     @JsonProperty("available_balance")
     private BigDecimal availableBalance;
+
+    @JsonProperty("review_note")
+    private String reviewNote;
 }

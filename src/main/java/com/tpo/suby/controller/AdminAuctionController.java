@@ -1,12 +1,15 @@
 package com.tpo.suby.controller;
 
 import com.tpo.suby.dto.request.admin.ApproveUserOnboardingRequest;
+import com.tpo.suby.dto.request.admin.ApprovePaymentMethodRequest;
 import com.tpo.suby.dto.request.admin.CreateAuctionRequest;
 import com.tpo.suby.dto.request.admin.ProposeProductRequest;
+import com.tpo.suby.dto.request.admin.RejectPaymentMethodRequest;
 import com.tpo.suby.dto.request.admin.RejectUserOnboardingRequest;
 import com.tpo.suby.dto.request.admin.RejectProductRequest;
 import com.tpo.suby.dto.response.ApiResponse;
 import com.tpo.suby.dto.response.admin.AdminAuctionCreationResponse;
+import com.tpo.suby.dto.response.admin.AdminPaymentMethodListResponse;
 import com.tpo.suby.dto.response.admin.AdminProductReviewResponse;
 import com.tpo.suby.dto.response.admin.AdminSubastadorOptionResponse;
 import com.tpo.suby.dto.response.admin.AdminUserRequestListResponse;
@@ -14,6 +17,7 @@ import com.tpo.suby.exception.OwnerProductValidationException;
 import com.tpo.suby.exception.UnauthorizedException;
 import com.tpo.suby.service.AuctionManagementService;
 import com.tpo.suby.service.AuthService;
+import com.tpo.suby.service.PaymentMethodService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -35,6 +39,7 @@ public class AdminAuctionController {
 
     private final AuctionManagementService auctionManagementService;
     private final AuthService authService;
+    private final PaymentMethodService paymentMethodService;
 
     @GetMapping("/products/review-queue")
     public ResponseEntity<?> listReviewQueue() {
@@ -60,6 +65,39 @@ public class AdminAuctionController {
                 .status("success")
                 .message(response)
                 .build());
+    }
+
+    @GetMapping("/payment-methods/review-queue")
+    public ResponseEntity<?> listPaymentMethodReviewQueue() {
+        AdminPaymentMethodListResponse response = paymentMethodService.listAdminPaymentMethods();
+        return ResponseEntity.ok(ApiResponse.<AdminPaymentMethodListResponse>builder()
+                .status("success")
+                .message(response)
+                .build());
+    }
+
+    @PostMapping("/payment-methods/{paymentMethodId}/approve")
+    public ResponseEntity<?> approvePaymentMethod(
+            @PathVariable Integer paymentMethodId,
+            @RequestBody(required = false) ApprovePaymentMethodRequest request
+    ) {
+        paymentMethodService.approvePaymentMethod(paymentMethodId, request);
+        return ResponseEntity.ok(Map.of(
+                "status", "success",
+                "message", "Medio de pago aprobado."
+        ));
+    }
+
+    @PostMapping("/payment-methods/{paymentMethodId}/reject")
+    public ResponseEntity<?> rejectPaymentMethod(
+            @PathVariable Integer paymentMethodId,
+            @RequestBody(required = false) RejectPaymentMethodRequest request
+    ) {
+        paymentMethodService.rejectPaymentMethod(paymentMethodId, request);
+        return ResponseEntity.ok(Map.of(
+                "status", "success",
+                "message", "Medio de pago rechazado."
+        ));
     }
 
     @PostMapping("/users/requests/{requestId}/approve")

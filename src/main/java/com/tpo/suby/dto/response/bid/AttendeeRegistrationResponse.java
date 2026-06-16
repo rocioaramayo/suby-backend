@@ -28,4 +28,7 @@ public class AttendeeRegistrationResponse {
 
     @JsonProperty("read_only_reason")
     private String readOnlyReason;
+
+    @JsonProperty("payment_method_id")
+    private Integer paymentMethodId;
 }

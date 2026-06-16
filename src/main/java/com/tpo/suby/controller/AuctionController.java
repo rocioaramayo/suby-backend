@@ -1,6 +1,7 @@
 package com.tpo.suby.controller;
 
 import com.tpo.suby.dto.request.bid.BidRequest;
+import com.tpo.suby.dto.request.bid.AttendeeRegistrationRequest;
 import com.tpo.suby.dto.response.ApiResponse;
 import com.tpo.suby.dto.response.auction.AuctionDetailResponse;
 import com.tpo.suby.dto.response.auction.AuctionListResponse;
@@ -105,8 +106,11 @@ public class AuctionController {
     }
 
     @PostMapping("/{auctionId}/attendees")
-    public ResponseEntity<?> registerAttendee(@PathVariable Integer auctionId) {
-        AttendeeRegistrationResponse attendee = bidRoomService.registerAttendee(auctionId);
+    public ResponseEntity<?> registerAttendee(
+            @PathVariable Integer auctionId,
+            @RequestBody(required = false) AttendeeRegistrationRequest request
+    ) {
+        AttendeeRegistrationResponse attendee = bidRoomService.registerAttendee(auctionId, request);
         return ResponseEntity.status(HttpStatus.CREATED).body(
                 ApiResponse.<AttendeeRegistrationResponse>builder()
                         .status("success")
@@ -233,7 +237,7 @@ public class AuctionController {
         return ResponseEntity.unprocessableEntity().body(
                 Map.of(
                         "status", "failed",
-                        "message", "Necesitás registrar al menos un medio de pago para pujar."
+                        "message", ex.getMessage()
                 )
         );
     }
