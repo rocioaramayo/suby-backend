@@ -59,6 +59,7 @@ public class UserProductService {
                     p.fecha AS date_registered,
                     CASE
                         WHEN LOWER(COALESCE(last_request.estado, '')) = 'rechazado' THEN 'rechazado'
+                        WHEN LOWER(COALESCE(last_request.estado, '')) = 'propuesto' THEN 'propuesto'
                         WHEN ic.identificador IS NOT NULL THEN 'aceptado'
                         WHEN LOWER(COALESCE(last_request.estado, '')) = 'aceptado' THEN 'aceptado'
                         WHEN LOWER(COALESCE(last_request.estado, '')) = 'en_revision' THEN 'en_revision'

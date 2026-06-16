@@ -134,12 +134,16 @@ public class UserNotificationService {
         return jdbcTemplate.query("""
                 SELECT
                     mp.identificador AS id,
-                    mp.tipo AS type,
+                    CASE
+                        WHEN mp.tipo = 'aviso_general' AND fk.valor = 'proposal_price' THEN 'propuesta_precio'
+                        ELSE mp.tipo
+                    END AS type,
                     mp.asunto AS title,
                     mp.cuerpo AS body,
                     CASE WHEN mp.leido = 'si' THEN 1 ELSE 0 END AS is_read,
                     mp.enviadoEn AS created_at
                 FROM mensajes_privados mp
+                LEFT JOIN mensajes_datos fk ON fk.mensaje = mp.identificador AND fk.clave = 'flow_kind'
                 WHERE mp.destinatario = ?
                 """, (rs, rowNum) -> new NotificationRow(
                 rs.getInt("id"),

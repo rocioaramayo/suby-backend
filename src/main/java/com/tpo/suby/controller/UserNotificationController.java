@@ -7,11 +7,13 @@ import com.tpo.suby.dto.response.user.UserNotificationReadResponse;
 import com.tpo.suby.exception.NotFoundException;
 import com.tpo.suby.exception.UnauthorizedException;
 import com.tpo.suby.service.UserNotificationService;
+import com.tpo.suby.service.ProductProposalService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -26,6 +28,7 @@ import java.util.Map;
 public class UserNotificationController {
 
     private final UserNotificationService userNotificationService;
+    private final ProductProposalService productProposalService;
 
     @GetMapping
     public ResponseEntity<?> getNotifications(
@@ -65,8 +68,32 @@ public class UserNotificationController {
                 ApiResponse.<UserNotificationReadResponse>builder()
                         .status("success")
                         .message(response)
-                        .build()
+                .build()
         );
+    }
+
+    @PostMapping("/{notificationId}/proposal/accept")
+    public ResponseEntity<?> acceptProposal(
+            @PathVariable Integer userId,
+            @PathVariable Integer notificationId
+    ) {
+        String message = productProposalService.acceptProposal(userId, notificationId);
+        return ResponseEntity.ok(Map.of(
+                "status", "success",
+                "message", message
+        ));
+    }
+
+    @PostMapping("/{notificationId}/proposal/reject")
+    public ResponseEntity<?> rejectProposal(
+            @PathVariable Integer userId,
+            @PathVariable Integer notificationId
+    ) {
+        String message = productProposalService.rejectProposal(userId, notificationId);
+        return ResponseEntity.ok(Map.of(
+                "status", "success",
+                "message", message
+        ));
     }
 
     @ExceptionHandler(UnauthorizedException.class)
