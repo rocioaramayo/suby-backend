@@ -29,6 +29,9 @@ public class OwnerProductItemResponse {
     @JsonProperty("insurance_policy")
     private String insurancePolicy;
 
+    @JsonProperty("insurance_phone")
+    private String insurancePhone;
+
     private OwnerProductDepositResponse deposit;
 
     @JsonProperty("estimated_value")

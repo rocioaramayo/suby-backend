@@ -67,6 +67,7 @@ public class UserProductService {
                     END AS inspection_status,
                     COALESCE(p.disponible, 'no') AS available,
                     COALESCE(pe.nroPoliza, p.seguro) AS insurance_policy,
+                    se.nroTelefono AS insurance_phone,
                     dep.identificador AS deposit_id,
                     dep.nombre AS deposit_name,
                     dep.direccion AS deposit_address,
@@ -77,6 +78,7 @@ public class UserProductService {
                 LEFT JOIN productos_detalle pd ON pd.identificador = p.identificador
                 LEFT JOIN depositos dep ON dep.identificador = pe.deposito
                 LEFT JOIN seguros seg ON seg.nroPoliza = COALESCE(pe.nroPoliza, p.seguro)
+                LEFT JOIN seguros_ext se ON se.nroPoliza = COALESCE(pe.nroPoliza, p.seguro)
                 LEFT JOIN itemsCatalogo ic ON ic.producto = p.identificador
                 LEFT JOIN catalogos c ON c.identificador = ic.catalogo
                 LEFT JOIN subastas s ON s.identificador = c.subasta
@@ -97,6 +99,7 @@ public class UserProductService {
                 .inspectionStatus(rs.getString("inspection_status"))
                 .available(rs.getString("available"))
                 .insurancePolicy(rs.getString("insurance_policy"))
+                .insurancePhone(rs.getString("insurance_phone"))
                 .deposit(rs.getObject("deposit_id") == null ? null : OwnerProductDepositResponse.builder()
                         .id(rs.getInt("deposit_id"))
                         .name(rs.getString("deposit_name"))
