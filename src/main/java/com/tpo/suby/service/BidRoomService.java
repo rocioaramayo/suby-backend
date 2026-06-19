@@ -98,6 +98,19 @@ public class BidRoomService {
             );
         }
 
+        BigDecimal activeBasePrice = activeBasePriceForAuction(auctionId);
+        if (activeBasePrice != null) {
+            BigDecimal availableBalance = selectedPaymentMethod.availableAmount().subtract(selectedPaymentMethod.usedAmount());
+            if (availableBalance.compareTo(activeBasePrice) < 0) {
+                upsertActiveSession(user.getIdentificador(), auction.id());
+                return observerAccess(
+                        auctionId,
+                        client.id(),
+                        "Tu saldo disponible es insuficiente para pujar en esta subasta. Podes ingresar como observador."
+                );
+            }
+        }
+
         if (attendeeExists(auctionId, client.id())) {
             upsertActiveSession(user.getIdentificador(), auction.id());
             return existingAttendee(auctionId, client.id(), paymentMethodId);
@@ -167,11 +180,11 @@ public class BidRoomService {
         }
 
         PaymentMethodState paymentMethod = paymentMethodState(client.id(), request.getPaymentMethodId(), auction.id(), auction.currency());
-        if (!paymentMethod.canBid() || !paymentMethod.hasFundsFor(amount)) {
+        if (!paymentMethod.canBid()) {
             throw new InsufficientBalanceException("Insufficient balance.");
         }
 
-        Integer bidId = insertBid(attendee.id(), itemId, amount);
+        Integer bidId = insertBid(attendee.id(), itemId, amount, request.getPaymentMethodId());
         auctionLotStateService.touchActivity(auctionId, itemId);
 
         return BidResponse.builder()
@@ -659,17 +672,22 @@ public class BidRoomService {
                 .build();
     }
 
-    private Integer insertBid(Integer attendeeId, Integer itemId, BigDecimal amount) {
+    private Integer insertBid(Integer attendeeId, Integer itemId, BigDecimal amount, Integer paymentMethodId) {
         KeyHolder keyHolder = new GeneratedKeyHolder();
         jdbcTemplate.update(connection -> {
             PreparedStatement ps = connection.prepareStatement("""
-                    INSERT INTO pujos (asistente, item, importe, ganador)
-                    VALUES (?, ?, ?, ?)
+                    INSERT INTO pujos (asistente, item, importe, ganador, medioDePago)
+                    VALUES (?, ?, ?, ?, ?)
                     """, Statement.RETURN_GENERATED_KEYS);
             ps.setInt(1, attendeeId);
             ps.setInt(2, itemId);
             ps.setBigDecimal(3, amount);
             ps.setString(4, "no");
+            if (paymentMethodId != null) {
+                ps.setInt(5, paymentMethodId);
+            } else {
+                ps.setNull(5, java.sql.Types.INTEGER);
+            }
             return ps;
         }, keyHolder);
 
@@ -678,6 +696,22 @@ public class BidRoomService {
             throw invalidAmount(BigDecimal.ZERO, BigDecimal.ZERO);
         }
         return key.intValue();
+    }
+
+    private BigDecimal activeBasePriceForAuction(Integer auctionId) {
+        Integer activeItemId = auctionLotStateService.currentActiveItemId(auctionId);
+        if (activeItemId == null) {
+            return null;
+        }
+        try {
+            return jdbcTemplate.queryForObject("""
+                    SELECT ic.precioBase
+                    FROM itemsCatalogo ic
+                    WHERE ic.identificador = ?
+                    """, BigDecimal.class, activeItemId);
+        } catch (org.springframework.dao.EmptyResultDataAccessException ex) {
+            return null;
+        }
     }
 
     private InvalidBidAmountException invalidAmount(BigDecimal minimum, BigDecimal maximum) {

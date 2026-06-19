@@ -133,6 +133,7 @@ public class AuctionLifecycleService {
                 winningBid.productId(),
                 itemId
         );
+        insertFineIfOverspent(winningBid.clientId(), winningBid.bidId(), winningBid.amount(), winningBid.paymentMethodId());
     }
 
     private void settleUnsoldItemForCompanyPurchase(AuctionSettlementInfo auction, Integer itemId) {
@@ -183,6 +184,7 @@ public class AuctionLifecycleService {
                     SELECT TOP 1
                         pu.identificador AS bid_id,
                         pu.importe AS bid_amount,
+                        pu.medioDePago AS payment_method_id,
                         a.cliente AS client_id,
                         ic.comision AS item_commission,
                         ic.precioBase AS base_price,
@@ -209,7 +211,8 @@ public class AuctionLifecycleService {
                     rs.getInt("product_id"),
                     rs.getInt("owner_id"),
                     rs.getString("item_title"),
-                    rs.getString("auction_name")
+                    rs.getString("auction_name"),
+                    nullableInt(rs, "payment_method_id")
             ), itemId);
         } catch (EmptyResultDataAccessException ex) {
             return null;
@@ -374,6 +377,47 @@ public class AuctionLifecycleService {
         return "$ " + amount.setScale(2, RoundingMode.HALF_UP);
     }
 
+    private void insertFineIfOverspent(Integer clientId, Integer bidId, BigDecimal winningAmount, Integer paymentMethodId) {
+        if (paymentMethodId == null) {
+            return;
+        }
+
+        BigDecimal availableBalance = getWinnerPaymentMethodBalance(paymentMethodId);
+        if (availableBalance == null) {
+            return;
+        }
+
+        if (winningAmount.compareTo(availableBalance) > 0) {
+            BigDecimal fineAmount = winningAmount
+                    .multiply(new BigDecimal("0.10"))
+                    .setScale(2, RoundingMode.HALF_UP);
+
+            jdbcTemplate.update("""
+                    INSERT INTO multas (
+                        cliente, puja, importeMulta, estado, fechaGeneracion, fechaLimitePago
+                    )
+                    VALUES (?, ?, ?, 'pendiente', GETDATE(), DATEADD(HOUR, 72, GETDATE()))
+                    """, clientId, bidId, fineAmount);
+        }
+    }
+
+    private BigDecimal getWinnerPaymentMethodBalance(Integer paymentMethodId) {
+        try {
+            return jdbcTemplate.queryForObject("""
+                    SELECT COALESCE(montoDisponible, 0) - COALESCE(montoUsado, 0)
+                    FROM mediosDePago
+                    WHERE identificador = ?
+                    """, BigDecimal.class, paymentMethodId);
+        } catch (EmptyResultDataAccessException ex) {
+            return null;
+        }
+    }
+
+    private Integer nullableInt(java.sql.ResultSet rs, String column) throws java.sql.SQLException {
+        int value = rs.getInt(column);
+        return rs.wasNull() ? null : value;
+    }
+
     private String defaultText(String value) {
         return value == null || value.isBlank() ? "tu operacion" : value;
     }
@@ -488,7 +532,8 @@ public class AuctionLifecycleService {
             Integer productId,
             Integer ownerId,
             String itemTitle,
-            String auctionName
+            String auctionName,
+            Integer paymentMethodId
     ) {
     }
 
