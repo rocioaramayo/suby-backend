@@ -133,7 +133,15 @@ public class AuctionLifecycleService {
                 winningBid.productId(),
                 itemId
         );
-        insertFineIfOverspent(winningBid.clientId(), winningBid.bidId(), winningBid.amount(), winningBid.paymentMethodId());
+        insertPenaltiesIfOverspent(
+                winningBid.clientId(),
+                winningBid.bidId(),
+                winningBid.amount(),
+                winningBid.paymentMethodId(),
+                winningBid.itemTitle(),
+                winningBid.auctionName(),
+                auction.currency()
+        );
     }
 
     private void settleUnsoldItemForCompanyPurchase(AuctionSettlementInfo auction, Integer itemId) {
@@ -377,7 +385,15 @@ public class AuctionLifecycleService {
         return "$ " + amount.setScale(2, RoundingMode.HALF_UP);
     }
 
-    private void insertFineIfOverspent(Integer clientId, Integer bidId, BigDecimal winningAmount, Integer paymentMethodId) {
+    private void insertPenaltiesIfOverspent(
+            Integer clientId,
+            Integer bidId,
+            BigDecimal winningAmount,
+            Integer paymentMethodId,
+            String itemTitle,
+            String auctionName,
+            String currency
+    ) {
         if (paymentMethodId == null) {
             return;
         }
@@ -387,18 +403,93 @@ public class AuctionLifecycleService {
             return;
         }
 
-        if (winningAmount.compareTo(availableBalance) > 0) {
-            BigDecimal fineAmount = winningAmount
-                    .multiply(new BigDecimal("0.10"))
-                    .setScale(2, RoundingMode.HALF_UP);
-
-            jdbcTemplate.update("""
-                    INSERT INTO multas (
-                        cliente, puja, importeMulta, estado, fechaGeneracion, fechaLimitePago
-                    )
-                    VALUES (?, ?, ?, 'pendiente', GETDATE(), DATEADD(HOUR, 72, GETDATE()))
-                    """, clientId, bidId, fineAmount);
+        if (winningAmount.compareTo(availableBalance) <= 0) {
+            return;
         }
+
+        // -- Multa del 10% sobre el precio ganador --
+        BigDecimal fineAmount = winningAmount
+                .multiply(new BigDecimal("0.10"))
+                .setScale(2, RoundingMode.HALF_UP);
+
+        jdbcTemplate.update("""
+                INSERT INTO multas (
+                    cliente, puja, importeMulta, estado, fechaGeneracion, fechaLimitePago
+                )
+                VALUES (?, ?, ?, 'pendiente', GETDATE(), DATEADD(HOUR, 72, GETDATE()))
+                """, clientId, bidId, fineAmount);
+
+        // -- Diferencia de saldo a pagar aparte --
+        BigDecimal differenceAmount = winningAmount.subtract(availableBalance)
+                .setScale(2, RoundingMode.HALF_UP);
+
+        insertDifferenceRecord(clientId, bidId, winningAmount, availableBalance, differenceAmount);
+        ensureDifferenceMessage(clientId, differenceAmount, winningAmount, availableBalance, itemTitle, auctionName, currency);
+    }
+
+    private void insertDifferenceRecord(
+            Integer clientId,
+            Integer bidId,
+            BigDecimal winningAmount,
+            BigDecimal availableBalance,
+            BigDecimal differenceAmount
+    ) {
+        // Solo insertar si no existe ya una diferencia para esta puja
+        Integer existing = jdbcTemplate.queryForObject("""
+                SELECT COUNT(*)
+                FROM diferencias_saldo
+                WHERE puja = ?
+                  AND cliente = ?
+                """, Integer.class, bidId, clientId);
+
+        if (existing != null && existing > 0) {
+            return;
+        }
+
+        jdbcTemplate.update("""
+                INSERT INTO diferencias_saldo (
+                    cliente, puja, importePuja, saldoDisponible, importeDiferencia,
+                    estado, fechaGeneracion, fechaLimitePago
+                )
+                VALUES (?, ?, ?, ?, ?, 'pendiente', GETDATE(), DATEADD(HOUR, 72, GETDATE()))
+                """, clientId, bidId, winningAmount, availableBalance, differenceAmount);
+    }
+
+    private void ensureDifferenceMessage(
+            Integer clientId,
+            BigDecimal differenceAmount,
+            BigDecimal winningAmount,
+            BigDecimal availableBalance,
+            String itemTitle,
+            String auctionName,
+            String currency
+    ) {
+        Map<String, String> data = new LinkedHashMap<>();
+        data.put("headline", "Tenés una diferencia de saldo pendiente");
+        data.put("flow_kind", "diferencia_saldo");
+        data.put("item_title", defaultText(itemTitle));
+        data.put("auction_name", defaultText(auctionName));
+        data.put("winning_bid", formatMoney(winningAmount));
+        data.put("available_balance", formatMoney(availableBalance));
+        data.put("difference_amount", formatMoney(differenceAmount));
+        data.put("currency", currency);
+        data.put("deadline_hours", "72");
+        data.put("cta_label", "Pagar diferencia");
+        data.put("cta_target", "/differences");
+
+        privateMessageService.createPrivateMessage(
+                clientId,
+                "aviso_general",
+                "Diferencia de saldo pendiente",
+                "Ganaste %s por %s pero tu saldo declarado era %s. Debés abonar la diferencia de %s dentro de las 72 hs para evitar el bloqueo de tu cuenta."
+                        .formatted(
+                                defaultText(itemTitle),
+                                formatMoney(winningAmount),
+                                formatMoney(availableBalance),
+                                formatMoney(differenceAmount)
+                        ),
+                data
+        );
     }
 
     private BigDecimal getWinnerPaymentMethodBalance(Integer paymentMethodId) {

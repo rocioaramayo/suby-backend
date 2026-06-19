@@ -1,5 +1,28 @@
 package com.tpo.suby.service;
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.sql.Date;
+import java.sql.PreparedStatement;
+import java.sql.Statement;
+import java.sql.Time;
+import java.text.DecimalFormat;
+import java.text.DecimalFormatSymbols;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.time.ZoneId;
+import java.util.Locale;
+
+import org.springframework.dao.EmptyResultDataAccessException;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.support.GeneratedKeyHolder;
+import org.springframework.jdbc.support.KeyHolder;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
 import com.tpo.suby.dto.request.bid.AttendeeRegistrationRequest;
 import com.tpo.suby.dto.request.bid.BidRequest;
 import com.tpo.suby.dto.response.bid.AttendeeRegistrationResponse;
@@ -19,29 +42,8 @@ import com.tpo.suby.exception.MissingPaymentMethodException;
 import com.tpo.suby.exception.NotFoundException;
 import com.tpo.suby.exception.UnauthorizedException;
 import com.tpo.suby.repository.UsuarioAppRepository;
-import lombok.RequiredArgsConstructor;
-import org.springframework.dao.EmptyResultDataAccessException;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.support.GeneratedKeyHolder;
-import org.springframework.jdbc.support.KeyHolder;
-import org.springframework.security.core.Authentication;
-import org.springframework.security.core.context.SecurityContextHolder;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
-import java.math.BigDecimal;
-import java.math.RoundingMode;
-import java.sql.Date;
-import java.sql.PreparedStatement;
-import java.sql.Statement;
-import java.sql.Time;
-import java.text.DecimalFormat;
-import java.text.DecimalFormatSymbols;
-import java.time.LocalDate;
-import java.time.LocalDateTime;
-import java.time.LocalTime;
-import java.time.ZoneId;
-import java.util.Locale;
+import lombok.RequiredArgsConstructor;
 
 @Service
 @RequiredArgsConstructor
@@ -63,7 +65,7 @@ public class BidRoomService {
         ClientInfo client = clientInfo(user.getIdentificador());
         AuctionInfo auction = auctionInfo(auctionId);
 
-        if (!isAuctionStarted(auction.date(), auction.hour())) {
+        if (!isAuctionStarted(auction.date(), auction.hour(), auction.state())) {
             throw new AuctionRoomAccessException("La subasta todavia no comenzo.");
         }
 
@@ -148,7 +150,7 @@ public class BidRoomService {
         ClientInfo client = clientInfo(user.getIdentificador());
         AuctionInfo auction = auctionInfo(auctionId);
 
-        if (!isAuctionStarted(auction.date(), auction.hour())) {
+        if (!isAuctionStarted(auction.date(), auction.hour(), auction.state())) {
             throw new AuctionRoomAccessException("Este lote todavia no esta habilitado para puja.");
         }
 
@@ -791,7 +793,13 @@ public class BidRoomService {
         return "cerrada".equalsIgnoreCase(auctionState);
     }
 
-    private boolean isAuctionStarted(LocalDate auctionDate, LocalTime auctionTime) {
+    private boolean isAuctionStarted(LocalDate auctionDate, LocalTime auctionTime, String state) {
+        // Si el estado ya es 'en_vivo' o 'abierta', el admin la abrió explícitamente → siempre permitir
+        String normalizedState = state != null ? state.trim() : "";
+        if ("en_vivo".equalsIgnoreCase(normalizedState) || "abierta".equalsIgnoreCase(normalizedState)) {
+            return true;
+        }
+        // Si el estado es 'proxima' o 'cerrada', verificar por fecha/hora como fallback
         LocalDateTime startsAt = LocalDateTime.of(
                 auctionDate == null ? LocalDate.now() : auctionDate,
                 auctionTime == null ? LocalTime.MIDNIGHT : auctionTime

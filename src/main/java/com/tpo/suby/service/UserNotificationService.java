@@ -31,6 +31,7 @@ public class UserNotificationService {
 
     private static final int PAYMENT_NOTIFICATION_OFFSET = 1_000_000;
     private static final int FINE_NOTIFICATION_OFFSET = 2_000_000;
+    private static final int DIFFERENCE_NOTIFICATION_OFFSET = 3_000_000;
     private static final int PAYMENT_REMINDER_DELAY_MINUTES = 30;
 
     private final JdbcTemplate jdbcTemplate;
@@ -75,6 +76,7 @@ public class UserNotificationService {
             case PRIVATE_MESSAGE -> enrichPrivateMessageData(userId, privateMessageData(notification.rawId()));
             case PAYMENT -> paymentNotificationData(userId, notification.rawId());
             case FINE -> fineNotificationData(userId, notification.rawId());
+            case DIFFERENCE -> differenceNotificationData(userId, notification.rawId());
         };
 
         return UserNotificationDetailResponse.builder()
@@ -120,6 +122,7 @@ public class UserNotificationService {
         notifications.addAll(privateMessages(userId));
         notifications.addAll(paymentNotifications(userId));
         notifications.addAll(fineNotifications(userId));
+        notifications.addAll(differenceNotifications(userId));
         return notifications;
     }
 
@@ -135,7 +138,8 @@ public class UserNotificationService {
                 SELECT
                     mp.identificador AS id,
                     CASE
-                        WHEN mp.tipo = 'aviso_general' AND fk.valor = 'proposal_price' THEN 'propuesta_precio'
+                        WHEN mp.tipo = 'aviso_general' AND fk.valor = 'proposal_price'    THEN 'propuesta_precio'
+                        WHEN mp.tipo = 'aviso_general' AND fk.valor = 'diferencia_saldo'  THEN 'diferencia_saldo'
                         ELSE mp.tipo
                     END AS type,
                     mp.asunto AS title,
@@ -245,6 +249,43 @@ public class UserNotificationService {
         }, userId);
     }
 
+    private List<NotificationRow> differenceNotifications(Integer userId) {
+        return jdbcTemplate.query("""
+                SELECT
+                    d.identificador       AS id,
+                    d.estado              AS diff_status,
+                    d.importeDiferencia   AS difference_amount,
+                    d.fechaGeneracion     AS created_at
+                FROM diferencias_saldo d
+                WHERE d.cliente = ?
+                  AND d.estado IN ('pendiente', 'vencida')
+                """, (rs, rowNum) -> {
+            String diffStatus = normalize(rs.getString("diff_status"));
+            String type = "vencida".equals(diffStatus) ? "diferencia_vencida" : "diferencia_pendiente";
+
+            String title = "vencida".equals(diffStatus)
+                    ? "Tu diferencia de saldo está vencida"
+                    : "Tenés una diferencia de saldo pendiente";
+
+            String body = "vencida".equals(diffStatus)
+                    ? "Tu diferencia por %s está vencida. Regularizá tu situación para rehabilitar tu cuenta."
+                            .formatted(formatMoney(rs.getBigDecimal("difference_amount")))
+                    : "Tenés una diferencia de saldo pendiente por %s. Debés abonarla dentro de las 72 hs."
+                            .formatted(formatMoney(rs.getBigDecimal("difference_amount")));
+
+            return new NotificationRow(
+                    DIFFERENCE_NOTIFICATION_OFFSET + rs.getInt("id"),
+                    type,
+                    title,
+                    body,
+                    false,
+                    rs.getTimestamp("created_at").toLocalDateTime(),
+                    NotificationSource.DIFFERENCE,
+                    rs.getInt("id")
+            );
+        }, userId);
+    }
+
     private Map<String, String> privateMessageData(Integer messageId) {
         List<Map.Entry<String, String>> rows = jdbcTemplate.query("""
                 SELECT clave, valor
@@ -319,6 +360,15 @@ public class UserNotificationService {
         Map<String, String> data = new LinkedHashMap<>();
         data.put("fine_id", String.valueOf(fineId));
         data.put("user_id", String.valueOf(userId));
+        return data;
+    }
+
+    private Map<String, String> differenceNotificationData(Integer userId, Integer differenceId) {
+        Map<String, String> data = new LinkedHashMap<>();
+        data.put("difference_id", String.valueOf(differenceId));
+        data.put("user_id", String.valueOf(userId));
+        data.put("cta_label", "Pagar diferencia");
+        data.put("cta_target", "/differences");
         return data;
     }
 
@@ -435,7 +485,8 @@ public class UserNotificationService {
     private enum NotificationSource {
         PRIVATE_MESSAGE,
         PAYMENT,
-        FINE
+        FINE,
+        DIFFERENCE
     }
 
     private record ProductInfo(String name) {
