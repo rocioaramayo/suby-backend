@@ -77,7 +77,7 @@ public class UserProductController {
             @RequestParam(value = "origin_docs[]", required = false) MultipartFile[] bracketOriginDocs
     ) {
 
-        System.out.println(insurancePolicy);
+  
         String message = userProductService.registerOwnerProduct(
                 userId,
                 name,
