@@ -9,6 +9,7 @@ import com.tpo.suby.dto.request.admin.RejectPaymentMethodRequest;
 import com.tpo.suby.dto.request.admin.RejectUserOnboardingRequest;
 import com.tpo.suby.dto.request.admin.RejectProductRequest;
 import com.tpo.suby.dto.request.admin.AssignProductInsuranceRequest;
+import com.tpo.suby.dto.request.admin.UpdateUserCategoryRequest;
 import com.tpo.suby.dto.response.ApiResponse;
 import com.tpo.suby.dto.response.admin.AdminAuctionCreationResponse;
 import com.tpo.suby.dto.response.admin.AdminInsuranceCompanyOptionResponse;
@@ -16,6 +17,7 @@ import com.tpo.suby.dto.response.admin.AdminPaymentMethodListResponse;
 import com.tpo.suby.dto.response.admin.AdminProductReviewResponse;
 import com.tpo.suby.dto.response.admin.AdminProductInsuranceOptionsResponse;
 import com.tpo.suby.dto.response.admin.AdminSubastadorOptionResponse;
+import com.tpo.suby.dto.response.admin.AdminManagedUserListResponse;
 import com.tpo.suby.dto.response.admin.AdminUserRequestListResponse;
 import com.tpo.suby.exception.OwnerProductValidationException;
 import com.tpo.suby.exception.UnauthorizedException;
@@ -79,6 +81,15 @@ public class AdminAuctionController {
                 .build());
     }
 
+    @GetMapping("/users")
+    public ResponseEntity<?> listManagedUsers() {
+        AdminManagedUserListResponse response = authService.listManagedUsers();
+        return ResponseEntity.ok(ApiResponse.<AdminManagedUserListResponse>builder()
+                .status("success")
+                .message(response)
+                .build());
+    }
+
     @GetMapping("/payment-methods/review-queue")
     public ResponseEntity<?> listPaymentMethodReviewQueue() {
         AdminPaymentMethodListResponse response = paymentMethodService.listAdminPaymentMethods();
@@ -130,6 +141,18 @@ public class AdminAuctionController {
             @RequestBody(required = false) RejectUserOnboardingRequest request
     ) {
         String message = authService.rejectAdminUserRequest(requestId, request);
+        return ResponseEntity.ok(Map.of(
+                "status", "success",
+                "message", message
+        ));
+    }
+
+    @PostMapping("/users/{userId}/category")
+    public ResponseEntity<?> updateManagedUserCategory(
+            @PathVariable Integer userId,
+            @RequestBody(required = false) UpdateUserCategoryRequest request
+    ) {
+        String message = authService.updateManagedUserCategory(userId, request);
         return ResponseEntity.ok(Map.of(
                 "status", "success",
                 "message", message
