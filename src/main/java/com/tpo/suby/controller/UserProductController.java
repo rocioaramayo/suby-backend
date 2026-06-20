@@ -26,7 +26,6 @@ import com.tpo.suby.exception.UnauthorizedException;
 import com.tpo.suby.service.UserProductService;
 
 import lombok.RequiredArgsConstructor;
-
 @RestController
 @RequestMapping("/api/v1/users/{userId}/products")
 @RequiredArgsConstructor
@@ -78,6 +77,8 @@ public class UserProductController {
             @RequestParam(value = "origin_docs", required = false) MultipartFile[] originDocs,
             @RequestParam(value = "origin_docs[]", required = false) MultipartFile[] bracketOriginDocs
     ) {
+
+        System.out.println(insurancePolicy);
         String message = userProductService.registerOwnerProduct(
                 userId,
                 name,

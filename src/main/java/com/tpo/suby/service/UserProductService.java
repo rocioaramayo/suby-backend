@@ -140,7 +140,7 @@ public class UserProductService {
             MultipartFile[] originDocs
     ) {
         validateOwner(userId);
-
+        
         if (isBlank(name)
                 || isBlank(condition)
                 || isBlank(category)
@@ -154,6 +154,7 @@ public class UserProductService {
             throw new OwnerProductValidationException("Invalid owner product request.");
         }
 
+        
         System.out.println(insurancePolicy);
         validatePhotos(photos);
         ensureInsuranceExists(insurancePolicy);

@@ -1,11 +1,8 @@
 package com.tpo.suby.service;
 
-import com.tpo.suby.entity.UsuarioApp;
-import com.tpo.suby.exception.NotFoundException;
-import com.tpo.suby.exception.OwnerProductValidationException;
-import com.tpo.suby.exception.UnauthorizedException;
-import com.tpo.suby.repository.UsuarioAppRepository;
-import lombok.RequiredArgsConstructor;
+import java.math.BigDecimal;
+import java.util.Map;
+
 import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.core.Authentication;
@@ -13,8 +10,13 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.math.BigDecimal;
-import java.util.Map;
+import com.tpo.suby.entity.UsuarioApp;
+import com.tpo.suby.exception.NotFoundException;
+import com.tpo.suby.exception.OwnerProductValidationException;
+import com.tpo.suby.exception.UnauthorizedException;
+import com.tpo.suby.repository.UsuarioAppRepository;
+
+import lombok.RequiredArgsConstructor;
 
 @Service
 @RequiredArgsConstructor
@@ -68,7 +70,7 @@ public class ProductProposalService {
 
         jdbcTemplate.update("""
                 UPDATE solicitudesIngreso
-                SET estado = 'propuesto_rechazado'
+                SET estado = 'propuesta_rechazada'
                 WHERE identificador = ?
                 """, context.requestId());
 
