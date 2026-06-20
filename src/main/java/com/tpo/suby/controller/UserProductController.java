@@ -65,7 +65,6 @@ public class UserProductController {
             @RequestParam("category") String category,
             @RequestParam("origin_provenance") String originProvenance,
             @RequestParam("full_description") String fullDescription,
-            @RequestParam("insurance_policy") String insurancePolicy,
             @RequestParam("ownership_declaration") Boolean ownershipDeclaration,
             @RequestParam("receiving_account_id") Integer receivingAccountId,
             @RequestParam(value = "is_art", required = false) Boolean isArt,
@@ -86,7 +85,6 @@ public class UserProductController {
                 category,
                 originProvenance,
                 fullDescription,
-                insurancePolicy,
                 ownershipDeclaration,
                 receivingAccountId,
                 isArt,
@@ -120,7 +118,7 @@ public class UserProductController {
         return ResponseEntity.badRequest().body(
                 Map.of(
                         "status", "failed",
-                        "message", "Error de validación: verificá que todos los campos requeridos estén completos."
+                        "message", ex.getMessage()
                 )
         );
     }

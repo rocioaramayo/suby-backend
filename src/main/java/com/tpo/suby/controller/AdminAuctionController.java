@@ -3,14 +3,17 @@ package com.tpo.suby.controller;
 import com.tpo.suby.dto.request.admin.ApproveUserOnboardingRequest;
 import com.tpo.suby.dto.request.admin.ApprovePaymentMethodRequest;
 import com.tpo.suby.dto.request.admin.CreateAuctionRequest;
+import com.tpo.suby.dto.request.admin.CreateProductInsuranceRequest;
 import com.tpo.suby.dto.request.admin.ProposeProductRequest;
 import com.tpo.suby.dto.request.admin.RejectPaymentMethodRequest;
 import com.tpo.suby.dto.request.admin.RejectUserOnboardingRequest;
 import com.tpo.suby.dto.request.admin.RejectProductRequest;
+import com.tpo.suby.dto.request.admin.AssignProductInsuranceRequest;
 import com.tpo.suby.dto.response.ApiResponse;
 import com.tpo.suby.dto.response.admin.AdminAuctionCreationResponse;
 import com.tpo.suby.dto.response.admin.AdminPaymentMethodListResponse;
 import com.tpo.suby.dto.response.admin.AdminProductReviewResponse;
+import com.tpo.suby.dto.response.admin.AdminProductInsuranceOptionsResponse;
 import com.tpo.suby.dto.response.admin.AdminSubastadorOptionResponse;
 import com.tpo.suby.dto.response.admin.AdminUserRequestListResponse;
 import com.tpo.suby.exception.OwnerProductValidationException;
@@ -127,6 +130,39 @@ public class AdminAuctionController {
     @PostMapping("/products/{productId}/accept")
     public ResponseEntity<?> acceptProduct(@PathVariable Integer productId) {
         String message = auctionManagementService.acceptProduct(productId);
+        return ResponseEntity.ok(Map.of(
+                "status", "success",
+                "message", message
+        ));
+    }
+
+    @GetMapping("/products/{productId}/insurance-options")
+    public ResponseEntity<?> listProductInsuranceOptions(@PathVariable Integer productId) {
+        AdminProductInsuranceOptionsResponse response = auctionManagementService.listProductInsuranceOptions(productId);
+        return ResponseEntity.ok(ApiResponse.<AdminProductInsuranceOptionsResponse>builder()
+                .status("success")
+                .message(response)
+                .build());
+    }
+
+    @PostMapping("/products/{productId}/insurance")
+    public ResponseEntity<?> assignProductInsurance(
+            @PathVariable Integer productId,
+            @RequestBody AssignProductInsuranceRequest request
+    ) {
+        String message = auctionManagementService.assignProductInsurance(productId, request);
+        return ResponseEntity.ok(Map.of(
+                "status", "success",
+                "message", message
+        ));
+    }
+
+    @PostMapping("/products/{productId}/insurance/create")
+    public ResponseEntity<?> createAndAssignProductInsurance(
+            @PathVariable Integer productId,
+            @RequestBody CreateProductInsuranceRequest request
+    ) {
+        String message = auctionManagementService.createAndAssignProductInsurance(productId, request);
         return ResponseEntity.ok(Map.of(
                 "status", "success",
                 "message", message

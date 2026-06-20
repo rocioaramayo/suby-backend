@@ -9,6 +9,7 @@ import java.util.List;
 import java.util.Locale;
 
 import org.springframework.dao.EmptyResultDataAccessException;
+import org.springframework.jdbc.BadSqlGrammarException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.support.GeneratedKeyHolder;
 import org.springframework.jdbc.support.KeyHolder;
@@ -37,9 +38,9 @@ public class UserProductService {
     private final UsuarioAppRepository usuarioAppRepository;
 
     public OwnerProductsResponse listOwnerProducts(Integer userId) {
-        validateOwner(userId);
+        Integer authenticatedUserId = resolveAuthenticatedOwnerId(userId);
 
-        if (!ownerProfileExists(userId)) {
+        if (!ownerProfileExists(authenticatedUserId)) {
             return OwnerProductsResponse.builder()
                     .products(List.of())
                     .total(0)
@@ -47,7 +48,39 @@ public class UserProductService {
                     .build();
         }
 
-        List<OwnerProductItemResponse> products = jdbcTemplate.query("""
+        List<OwnerProductItemResponse> products = jdbcTemplate.query(ownerProductsSql(),
+                (rs, rowNum) -> OwnerProductItemResponse.builder()
+                .productId(rs.getInt("product_id"))
+                .name(rs.getString("name"))
+                .category(rs.getString("category"))
+                .dateRegistered(toLocalDate(rs.getDate("date_registered")))
+                .inspectionStatus(rs.getString("inspection_status"))
+                .available(rs.getString("available"))
+                .insurancePolicy(rs.getString("insurance_policy"))
+                .insurancePhone(rs.getString("insurance_phone"))
+                .deposit(rs.getObject("deposit_id") == null ? null : OwnerProductDepositResponse.builder()
+                        .id(rs.getInt("deposit_id"))
+                        .name(rs.getString("deposit_name"))
+                        .address(rs.getString("deposit_address"))
+                        .build())
+                .estimatedValue(rs.getBigDecimal("estimated_value"))
+                .catalogDescription(rs.getString("catalog_description"))
+                .thumbnailUrl(firstOwnerProductPhotoUrl(authenticatedUserId, rs.getInt("product_id")))
+                .build(), authenticatedUserId);
+
+        int accepted = (int) products.stream()
+                .filter(product -> "aceptado".equalsIgnoreCase(product.getInspectionStatus()))
+                .count();
+
+        return OwnerProductsResponse.builder()
+                .products(products)
+                .total(products.size())
+                .accepted(accepted)
+                .build();
+    }
+
+    private String ownerProductsSql() {
+        return """
                 SELECT
                     p.identificador AS product_id,
                     COALESCE(pd.titulo, p.descripcionCatalogo, p.descripcionCompleta) AS name,
@@ -67,7 +100,7 @@ public class UserProductService {
                     END AS inspection_status,
                     COALESCE(p.disponible, 'no') AS available,
                     COALESCE(pe.nroPoliza, p.seguro) AS insurance_policy,
-                    se.nroTelefono AS insurance_phone,
+                    %s AS insurance_phone,
                     dep.identificador AS deposit_id,
                     dep.nombre AS deposit_name,
                     dep.direccion AS deposit_address,
@@ -78,7 +111,7 @@ public class UserProductService {
                 LEFT JOIN productos_detalle pd ON pd.identificador = p.identificador
                 LEFT JOIN depositos dep ON dep.identificador = pe.deposito
                 LEFT JOIN seguros seg ON seg.nroPoliza = COALESCE(pe.nroPoliza, p.seguro)
-                LEFT JOIN seguros_ext se ON se.nroPoliza = COALESCE(pe.nroPoliza, p.seguro)
+                %s
                 LEFT JOIN itemsCatalogo ic ON ic.producto = p.identificador
                 LEFT JOIN catalogos c ON c.identificador = ic.catalogo
                 LEFT JOIN subastas s ON s.identificador = c.subasta
@@ -91,34 +124,31 @@ public class UserProductService {
                 ) last_request
                 WHERE p.duenio = ?
                 ORDER BY p.identificador DESC
-                """, (rs, rowNum) -> OwnerProductItemResponse.builder()
-                .productId(rs.getInt("product_id"))
-                .name(rs.getString("name"))
-                .category(rs.getString("category"))
-                .dateRegistered(toLocalDate(rs.getDate("date_registered")))
-                .inspectionStatus(rs.getString("inspection_status"))
-                .available(rs.getString("available"))
-                .insurancePolicy(rs.getString("insurance_policy"))
-                .insurancePhone(rs.getString("insurance_phone"))
-                .deposit(rs.getObject("deposit_id") == null ? null : OwnerProductDepositResponse.builder()
-                        .id(rs.getInt("deposit_id"))
-                        .name(rs.getString("deposit_name"))
-                        .address(rs.getString("deposit_address"))
-                        .build())
-                .estimatedValue(rs.getBigDecimal("estimated_value"))
-                .catalogDescription(rs.getString("catalog_description"))
-                .thumbnailUrl(firstOwnerProductPhotoUrl(userId, rs.getInt("product_id")))
-                .build(), userId);
+                """.formatted(insurancePhoneSelect(), insurancePhoneJoin());
+    }
 
-        int accepted = (int) products.stream()
-                .filter(product -> "aceptado".equalsIgnoreCase(product.getInspectionStatus()))
-                .count();
+    private String insurancePhoneSelect() {
+        if (tableExists("seguros_contacto_ext")) {
+            return "sec.nroTelefono";
+        }
 
-        return OwnerProductsResponse.builder()
-                .products(products)
-                .total(products.size())
-                .accepted(accepted)
-                .build();
+        if (columnExists("seguros_ext", "nroTelefono")) {
+            return "se.nroTelefono";
+        }
+
+        return "NULL";
+    }
+
+    private String insurancePhoneJoin() {
+        if (tableExists("seguros_contacto_ext")) {
+            return "LEFT JOIN seguros_contacto_ext sec ON sec.nroPoliza = COALESCE(pe.nroPoliza, p.seguro)";
+        }
+
+        if (columnExists("seguros_ext", "nroTelefono")) {
+            return "LEFT JOIN seguros_ext se ON se.nroPoliza = COALESCE(pe.nroPoliza, p.seguro)";
+        }
+
+        return "";
     }
 
     @Transactional
@@ -129,7 +159,6 @@ public class UserProductService {
             String category,
             String originProvenance,
             String fullDescription,
-            String insurancePolicy,
             Boolean ownershipDeclaration,
             Integer receivingAccountId,
             Boolean isArt,
@@ -139,14 +168,15 @@ public class UserProductService {
             MultipartFile[] photos,
             MultipartFile[] originDocs
     ) {
-        validateOwner(userId);
-        
+
+        Integer authenticatedUserId = resolveAuthenticatedOwnerId(userId);
+
+
         if (isBlank(name)
                 || isBlank(condition)
                 || isBlank(category)
                 || isBlank(originProvenance)
                 || isBlank(fullDescription)
-                || isBlank(insurancePolicy)
                 || ownershipDeclaration == null
                 || !ownershipDeclaration
                 || receivingAccountId == null
@@ -154,22 +184,20 @@ public class UserProductService {
             throw new OwnerProductValidationException("Invalid owner product request.");
         }
 
-        
-        System.out.println(insurancePolicy);
-        validatePhotos(photos);
-        ensureInsuranceExists(insurancePolicy);
-        ensureOwnerProfileExists(userId);
 
-        BankAccountData receivingAccount = loadReceivingAccount(userId, receivingAccountId);
-        ensureDestinationAccount(userId, receivingAccount);
+        validatePhotos(photos);
+        ensureOwnerProfileExists(authenticatedUserId);
+
+        BankAccountData receivingAccount = loadReceivingAccount(authenticatedUserId, receivingAccountId);
+        ensureDestinationAccount(authenticatedUserId, receivingAccount);
 
         Integer reviewerId = firstEmployeeId();
-        Integer productId = insertProduct(userId, reviewerId, name, fullDescription, insurancePolicy);
+        Integer productId = insertProduct(authenticatedUserId, reviewerId, name, fullDescription);
 
         jdbcTemplate.update("""
                 INSERT INTO productos_ext (identificador, deposito, nroPoliza)
-                VALUES (?, NULL, ?)
-                """, productId, insurancePolicy);
+                VALUES (?, NULL, NULL)
+                """, productId);
 
         jdbcTemplate.update("""
                 INSERT INTO productos_detalle (
@@ -200,13 +228,13 @@ public class UserProductService {
                     motivoRechazo, revisadoPor, gastosDevolucion
                 )
                 VALUES (?, 'pendiente', GETDATE(), ?, 'si', 'si', NULL, NULL, NULL, NULL)
-                """, userId, name);
+                """, authenticatedUserId, name);
 
-        return "Tu artículo fue enviado para revisión. Te notificaremos cuando esté aprobado.";
+        return "Tu artículo fue enviado para revisión. Quedó pendiente y sin póliza hasta que administración lo evalúe.";
     }
 
     public ProductPhotoBinary loadOwnerProductPhoto(Integer userId, Integer productId, Integer photoId) {
-        validateOwner(userId);
+        Integer authenticatedUserId = resolveAuthenticatedOwnerId(userId);
 
         if (productId == null || productId <= 0 || photoId == null || photoId <= 0) {
             throw new OwnerProductValidationException("Invalid owner product photo request.");
@@ -220,7 +248,7 @@ public class UserProductService {
                     WHERE p.identificador = ?
                       AND p.duenio = ?
                       AND f.identificador = ?
-                    """, byte[].class, productId, userId, photoId);
+                    """, byte[].class, productId, authenticatedUserId, photoId);
 
             if (bytes == null || bytes.length == 0) {
                 throw new OwnerProductValidationException("Invalid owner product photo request.");
@@ -236,8 +264,7 @@ public class UserProductService {
             Integer ownerId,
             Integer reviewerId,
             String name,
-            String fullDescription,
-            String insurancePolicy
+            String fullDescription
     ) {
         KeyHolder keyHolder = new GeneratedKeyHolder();
         jdbcTemplate.update(connection -> {
@@ -254,7 +281,7 @@ public class UserProductService {
             ps.setString(4, fullDescription);
             ps.setInt(5, reviewerId);
             ps.setInt(6, ownerId);
-            ps.setString(7, insurancePolicy);
+            ps.setNull(7, java.sql.Types.VARCHAR);
             return ps;
         }, keyHolder);
 
@@ -310,18 +337,6 @@ public class UserProductService {
 
         if (validPhotos < 6) {
             throw new InsufficientProductPhotosException("Missing product photos.");
-        }
-    }
-
-    private void ensureInsuranceExists(String insurancePolicy) {
-        Integer count = jdbcTemplate.queryForObject("""
-                SELECT COUNT(*)
-                FROM seguros
-                WHERE nroPoliza = ?
-                """, Integer.class, insurancePolicy);
-
-        if (count == null || count == 0) {
-            throw new OwnerProductValidationException("Invalid insurance policy.");
         }
     }
 
@@ -424,8 +439,8 @@ public class UserProductService {
         }
     }
 
-    private void validateOwner(Integer userId) {
-        if (userId == null || userId <= 0) {
+    private Integer resolveAuthenticatedOwnerId(Integer requestedUserId) {
+        if (requestedUserId == null || requestedUserId <= 0) {
             throw new UnauthorizedException("No autorizado.");
         }
 
@@ -438,8 +453,37 @@ public class UserProductService {
         UsuarioApp user = usuarioAppRepository.findByEmail(authentication.getName())
                 .orElseThrow(() -> new UnauthorizedException("No autorizado."));
 
-        if (!user.getIdentificador().equals(userId)) {
+        if (requestedUserId != null && !user.getIdentificador().equals(requestedUserId)) {
             throw new UnauthorizedException("No autorizado.");
+        }
+
+        return user.getIdentificador();
+    }
+
+    private boolean tableExists(String tableName) {
+        try {
+            Integer count = jdbcTemplate.queryForObject("""
+                    SELECT COUNT(*)
+                    FROM INFORMATION_SCHEMA.TABLES
+                    WHERE TABLE_NAME = ?
+                    """, Integer.class, tableName);
+            return count != null && count > 0;
+        } catch (BadSqlGrammarException ex) {
+            return false;
+        }
+    }
+
+    private boolean columnExists(String tableName, String columnName) {
+        try {
+            Integer count = jdbcTemplate.queryForObject("""
+                    SELECT COUNT(*)
+                    FROM INFORMATION_SCHEMA.COLUMNS
+                    WHERE TABLE_NAME = ?
+                      AND COLUMN_NAME = ?
+                    """, Integer.class, tableName, columnName);
+            return count != null && count > 0;
+        } catch (BadSqlGrammarException ex) {
+            return false;
         }
     }
 
