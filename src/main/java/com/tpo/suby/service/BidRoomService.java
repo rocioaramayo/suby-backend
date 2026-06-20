@@ -675,30 +675,39 @@ public class BidRoomService {
     }
 
     private Integer insertBid(Integer attendeeId, Integer itemId, BigDecimal amount, Integer paymentMethodId) {
-        KeyHolder keyHolder = new GeneratedKeyHolder();
-        jdbcTemplate.update(connection -> {
-            PreparedStatement ps = connection.prepareStatement("""
-                    INSERT INTO pujos (asistente, item, importe, ganador, medioDePago)
-                    VALUES (?, ?, ?, ?, ?)
-                    """, Statement.RETURN_GENERATED_KEYS);
-            ps.setInt(1, attendeeId);
-            ps.setInt(2, itemId);
-            ps.setBigDecimal(3, amount);
-            ps.setString(4, "no");
-            if (paymentMethodId != null) {
-                ps.setInt(5, paymentMethodId);
-            } else {
-                ps.setNull(5, java.sql.Types.INTEGER);
-            }
-            return ps;
-        }, keyHolder);
+            KeyHolder keyHolder = new GeneratedKeyHolder();
+            
+            
+            jdbcTemplate.update(connection -> {
+                PreparedStatement ps = connection.prepareStatement("""
+                        INSERT INTO pujos (asistente, item, importe, ganador)
+                        VALUES (?, ?, ?, ?)
+                        """, Statement.RETURN_GENERATED_KEYS);
+                ps.setInt(1, attendeeId);
+                ps.setInt(2, itemId);
+                ps.setBigDecimal(3, amount);
+                ps.setString(4, "no");
+                return ps;
+            }, keyHolder);
 
-        Number key = keyHolder.getKey();
-        if (key == null) {
-            throw invalidAmount(BigDecimal.ZERO, BigDecimal.ZERO);
+            Number key = keyHolder.getKey();
+            if (key == null) {
+                throw invalidAmount(BigDecimal.ZERO, BigDecimal.ZERO);
+            }
+            
+            Integer pujoId = key.intValue();
+
+            
+            if (paymentMethodId != null) {
+                jdbcTemplate.update("""
+                        INSERT INTO pujos_medios_de_pago (id_pujo, id_medio_de_pago)
+                        VALUES (?, ?)
+                        """, pujoId, paymentMethodId);
+            }
+
+            
+            return pujoId;
         }
-        return key.intValue();
-    }
 
     private BigDecimal activeBasePriceForAuction(Integer auctionId) {
         Integer activeItemId = auctionLotStateService.currentActiveItemId(auctionId);

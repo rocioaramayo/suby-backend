@@ -1,17 +1,18 @@
 package com.tpo.suby.service;
 
-import lombok.RequiredArgsConstructor;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
 import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.math.BigDecimal;
-import java.math.RoundingMode;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
+import lombok.RequiredArgsConstructor;
 
 @Service
 @RequiredArgsConstructor
@@ -186,13 +187,13 @@ public class AuctionLifecycleService {
         );
     }
 
-    private WinningBidInfo highestBid(Integer itemId) {
+private WinningBidInfo highestBid(Integer itemId) {
         try {
             return jdbcTemplate.queryForObject("""
                     SELECT TOP 1
                         pu.identificador AS bid_id,
                         pu.importe AS bid_amount,
-                        pu.medioDePago AS payment_method_id,
+                        pmp.id_medio_de_pago AS payment_method_id,
                         a.cliente AS client_id,
                         ic.comision AS item_commission,
                         ic.precioBase AS base_price,
@@ -201,6 +202,7 @@ public class AuctionLifecycleService {
                         COALESCE(pd.titulo, p.descripcionCatalogo, p.descripcionCompleta) AS item_title,
                         COALESCE(c.descripcion, CONCAT('Subasta ', s.identificador)) AS auction_name
                     FROM pujos pu
+                    LEFT JOIN pujos_medios_de_pago pmp ON pmp.id_pujo = pu.identificador 
                     JOIN asistentes a ON a.identificador = pu.asistente
                     JOIN itemsCatalogo ic ON ic.identificador = pu.item
                     JOIN productos p ON p.identificador = ic.producto
