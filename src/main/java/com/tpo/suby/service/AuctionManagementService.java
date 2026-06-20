@@ -370,7 +370,6 @@ public class AuctionManagementService {
         }
 
         String company = request.getCompany().trim();
-        ensureInsuranceCompanyExists(company);
 
         String insurancePolicy = isBlank(request.getInsurancePolicy())
                 ? generateInsurancePolicyNumber()
@@ -887,18 +886,6 @@ public class AuctionManagementService {
 
         if (count == null || count == 0) {
             throw new OwnerProductValidationException("La póliza indicada no existe.");
-        }
-    }
-
-    private void ensureInsuranceCompanyExists(String company) {
-        Integer count = jdbcTemplate.queryForObject("""
-                SELECT COUNT(*)
-                FROM seguros
-                WHERE LTRIM(RTRIM(compania)) = ?
-                """, Integer.class, company);
-
-        if (count == null || count == 0) {
-            throw new OwnerProductValidationException("La compañía seleccionada no existe en seguros.");
         }
     }
 
