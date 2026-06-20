@@ -7,6 +7,7 @@ import com.tpo.suby.dto.request.admin.ProposeProductRequest;
 import com.tpo.suby.dto.request.admin.RejectProductRequest;
 import com.tpo.suby.dto.request.admin.AssignProductInsuranceRequest;
 import com.tpo.suby.dto.response.admin.AdminInsuranceOptionResponse;
+import com.tpo.suby.dto.response.admin.AdminInsuranceCompanyOptionResponse;
 import com.tpo.suby.dto.response.admin.AdminAuctionCreationResponse;
 import com.tpo.suby.dto.response.admin.AdminProductInsuranceOptionsResponse;
 import com.tpo.suby.dto.response.admin.AdminProductReviewItemResponse;
@@ -187,6 +188,20 @@ public class AuctionManagementService {
                 .build());
     }
 
+    public List<AdminInsuranceCompanyOptionResponse> listInsuranceCompanies() {
+        validateAdminAccess();
+
+        return jdbcTemplate.query("""
+                SELECT DISTINCT compania AS company
+                FROM seguros
+                WHERE compania IS NOT NULL
+                  AND LTRIM(RTRIM(compania)) <> ''
+                ORDER BY compania ASC
+                """, (rs, rowNum) -> AdminInsuranceCompanyOptionResponse.builder()
+                .company(rs.getString("company"))
+                .build());
+    }
+
     public AdminProductInsuranceOptionsResponse listProductInsuranceOptions(Integer productId) {
         validateAdminAccess();
         ProductContext context = loadProductContext(productId);
@@ -354,6 +369,9 @@ public class AuctionManagementService {
             throw new OwnerProductValidationException("Completá compañía, monto y tipo de póliza para crearla.");
         }
 
+        String company = request.getCompany().trim();
+        ensureInsuranceCompanyExists(company);
+
         String insurancePolicy = isBlank(request.getInsurancePolicy())
                 ? generateInsurancePolicyNumber()
                 : request.getInsurancePolicy().trim();
@@ -371,7 +389,7 @@ public class AuctionManagementService {
         jdbcTemplate.update("""
                 INSERT INTO seguros (nroPoliza, compania, polizaCombinada, importe)
                 VALUES (?, ?, ?, ?)
-                """, insurancePolicy, request.getCompany().trim(),
+                """, insurancePolicy, company,
                 Boolean.TRUE.equals(request.getCombinedPolicy()) ? "si" : "no",
                 request.getAmount());
 
@@ -869,6 +887,18 @@ public class AuctionManagementService {
 
         if (count == null || count == 0) {
             throw new OwnerProductValidationException("La póliza indicada no existe.");
+        }
+    }
+
+    private void ensureInsuranceCompanyExists(String company) {
+        Integer count = jdbcTemplate.queryForObject("""
+                SELECT COUNT(*)
+                FROM seguros
+                WHERE LTRIM(RTRIM(compania)) = ?
+                """, Integer.class, company);
+
+        if (count == null || count == 0) {
+            throw new OwnerProductValidationException("La compañía seleccionada no existe en seguros.");
         }
     }
 
