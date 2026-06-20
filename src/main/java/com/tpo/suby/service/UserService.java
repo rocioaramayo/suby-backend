@@ -1,13 +1,9 @@
 package com.tpo.suby.service;
 
-import com.tpo.suby.dto.request.ChangePasswordRequest;
-import com.tpo.suby.dto.response.user.UserProfileResponse;
-import com.tpo.suby.dto.response.user.CategoryProgressResponse;
-import com.tpo.suby.dto.response.user.UserStatsResponse;
-import com.tpo.suby.entity.UsuarioApp;
-import com.tpo.suby.exception.NotFoundException;
-import com.tpo.suby.repository.UsuarioAppRepository;
-import lombok.RequiredArgsConstructor;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.time.LocalDateTime;
+
 import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.access.AccessDeniedException;
@@ -17,9 +13,15 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
-import java.time.LocalDateTime;
-import java.math.BigDecimal;
-import java.math.RoundingMode;
+import com.tpo.suby.dto.request.ChangePasswordRequest;
+import com.tpo.suby.dto.response.user.CategoryProgressResponse;
+import com.tpo.suby.dto.response.user.UserProfileResponse;
+import com.tpo.suby.dto.response.user.UserStatsResponse;
+import com.tpo.suby.entity.UsuarioApp;
+import com.tpo.suby.exception.NotFoundException;
+import com.tpo.suby.repository.UsuarioAppRepository;
+
+import lombok.RequiredArgsConstructor;
 
 @Service
 @RequiredArgsConstructor
@@ -166,7 +168,7 @@ public class UserService {
                         WHERE a.cliente = u.identificador
                     ) participation
                     OUTER APPLY (
-                        SELECT COUNT(*) AS auctions_won
+                        SELECT COUNT(DISTINCT a.subasta) AS auctions_won 
                         FROM pujos pu
                         JOIN asistentes a ON a.identificador = pu.asistente
                         WHERE a.cliente = u.identificador
@@ -186,10 +188,10 @@ public class UserService {
                     rs.getInt("payment_types_registered")
             ), usuarioLogueado.getIdentificador());
 
-            BigDecimal successRate = stats.totalBids() == 0
+            BigDecimal successRate = stats.totalAuctionsParticipated() == 0
                     ? BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP)
                     : BigDecimal.valueOf(stats.auctionsWon())
-                    .divide(BigDecimal.valueOf(stats.totalBids()), 2, RoundingMode.HALF_UP);
+                    .divide(BigDecimal.valueOf(stats.totalAuctionsParticipated()), 2, RoundingMode.HALF_UP);
 
             return UserStatsResponse.builder()
                     .successRate(successRate)
