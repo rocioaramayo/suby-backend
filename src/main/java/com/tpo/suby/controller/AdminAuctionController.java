@@ -11,6 +11,7 @@ import com.tpo.suby.dto.request.admin.RejectProductRequest;
 import com.tpo.suby.dto.request.admin.AssignProductInsuranceRequest;
 import com.tpo.suby.dto.response.ApiResponse;
 import com.tpo.suby.dto.response.admin.AdminAuctionCreationResponse;
+import com.tpo.suby.dto.response.admin.AdminInsuranceCompanyOptionResponse;
 import com.tpo.suby.dto.response.admin.AdminPaymentMethodListResponse;
 import com.tpo.suby.dto.response.admin.AdminProductReviewResponse;
 import com.tpo.suby.dto.response.admin.AdminProductInsuranceOptionsResponse;
@@ -58,6 +59,14 @@ public class AdminAuctionController {
         return ResponseEntity.ok(ApiResponse.<java.util.List<AdminSubastadorOptionResponse>>builder()
                 .status("success")
                 .message(auctionManagementService.listSubastadores())
+                .build());
+    }
+
+    @GetMapping("/insurance-companies")
+    public ResponseEntity<?> listInsuranceCompanies() {
+        return ResponseEntity.ok(ApiResponse.<java.util.List<AdminInsuranceCompanyOptionResponse>>builder()
+                .status("success")
+                .message(auctionManagementService.listInsuranceCompanies())
                 .build());
     }
 
