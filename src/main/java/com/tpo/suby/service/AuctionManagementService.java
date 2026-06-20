@@ -2,9 +2,13 @@ package com.tpo.suby.service;
 
 import com.tpo.suby.dto.request.admin.CreateAuctionRequest;
 import com.tpo.suby.dto.request.admin.CreateAuctionLotRequest;
+import com.tpo.suby.dto.request.admin.CreateProductInsuranceRequest;
 import com.tpo.suby.dto.request.admin.ProposeProductRequest;
 import com.tpo.suby.dto.request.admin.RejectProductRequest;
+import com.tpo.suby.dto.request.admin.AssignProductInsuranceRequest;
+import com.tpo.suby.dto.response.admin.AdminInsuranceOptionResponse;
 import com.tpo.suby.dto.response.admin.AdminAuctionCreationResponse;
+import com.tpo.suby.dto.response.admin.AdminProductInsuranceOptionsResponse;
 import com.tpo.suby.dto.response.admin.AdminProductReviewItemResponse;
 import com.tpo.suby.dto.response.admin.AdminProductReviewResponse;
 import com.tpo.suby.dto.response.admin.AdminSubastadorOptionResponse;
@@ -14,6 +18,7 @@ import com.tpo.suby.exception.UnauthorizedException;
 import com.tpo.suby.repository.UsuarioAppRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.EmptyResultDataAccessException;
+import org.springframework.jdbc.BadSqlGrammarException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.support.GeneratedKeyHolder;
 import org.springframework.jdbc.support.KeyHolder;
@@ -30,9 +35,11 @@ import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.StringJoiner;
 
 @Service
@@ -180,6 +187,59 @@ public class AuctionManagementService {
                 .build());
     }
 
+    public AdminProductInsuranceOptionsResponse listProductInsuranceOptions(Integer productId) {
+        validateAdminAccess();
+        ProductContext context = loadProductContext(productId);
+        ensureApprovedProductForInsurance(context);
+
+        List<AdminInsuranceOptionResponse> options = jdbcTemplate.query("""
+                SELECT
+                    s.nroPoliza AS insurance_policy,
+                    s.compania AS company,
+                    s.polizaCombinada AS combined_flag,
+                    s.importe AS amount,
+                    %s AS insurer_phone,
+                    (
+                        SELECT COUNT(*)
+                        FROM productos p2
+                        WHERE p2.seguro = s.nroPoliza
+                    ) AS assigned_products
+                FROM seguros s
+                JOIN seguros_ext se ON se.nroPoliza = s.nroPoliza
+                %s
+                WHERE se.duenio = ?
+                  AND (
+                        s.polizaCombinada = 'si'
+                        OR NOT EXISTS (
+                            SELECT 1
+                            FROM productos p3
+                            WHERE p3.seguro = s.nroPoliza
+                              AND p3.identificador <> ?
+                        )
+                      )
+                ORDER BY s.compania ASC, s.nroPoliza ASC
+                """.formatted(insurerPhoneSelect("se", "sec"), insurerPhoneJoin("s")),
+                (rs, rowNum) -> AdminInsuranceOptionResponse.builder()
+                        .insurancePolicy(rs.getString("insurance_policy"))
+                        .company(rs.getString("company"))
+                        .combinedPolicy("si".equalsIgnoreCase(rs.getString("combined_flag")))
+                        .amount(rs.getBigDecimal("amount"))
+                        .insurerPhone(rs.getString("insurer_phone"))
+                        .assignedProducts(rs.getInt("assigned_products"))
+                        .currentForProduct(rs.getString("insurance_policy") != null
+                                && rs.getString("insurance_policy").equalsIgnoreCase(context.currentInsurancePolicy()))
+                        .build(),
+                context.ownerId(), context.productId());
+
+        return AdminProductInsuranceOptionsResponse.builder()
+                .productId(context.productId())
+                .ownerId(context.ownerId())
+                .ownerName(context.ownerName())
+                .currentInsurancePolicy(context.currentInsurancePolicy())
+                .options(options)
+                .build();
+    }
+
     @Transactional
     public String proposeProduct(Integer productId, ProposeProductRequest request) {
         Integer employeeId = resolveOperatorId();
@@ -263,6 +323,62 @@ public class AuctionManagementService {
         );
 
         return "El bien fue aprobado correctamente.";
+    }
+
+    @Transactional
+    public String assignProductInsurance(Integer productId, AssignProductInsuranceRequest request) {
+        resolveOperatorId();
+        ProductContext context = loadProductContext(productId);
+        ensureApprovedProductForInsurance(context);
+
+        String insurancePolicy = request == null || isBlank(request.getInsurancePolicy())
+                ? null
+                : request.getInsurancePolicy().trim();
+
+        if (insurancePolicy == null) {
+            throw new OwnerProductValidationException("Debés indicar una póliza válida.");
+        }
+
+        assignInsurancePolicy(context, insurancePolicy);
+        return "La póliza fue asignada correctamente al producto.";
+    }
+
+    @Transactional
+    public String createAndAssignProductInsurance(Integer productId, CreateProductInsuranceRequest request) {
+        resolveOperatorId();
+        ProductContext context = loadProductContext(productId);
+        ensureApprovedProductForInsurance(context);
+
+        if (request == null || isBlank(request.getCompany()) || request.getAmount() == null
+                || request.getAmount().compareTo(BigDecimal.ZERO) <= 0 || request.getCombinedPolicy() == null) {
+            throw new OwnerProductValidationException("Completá compañía, monto y tipo de póliza para crearla.");
+        }
+
+        String insurancePolicy = isBlank(request.getInsurancePolicy())
+                ? generateInsurancePolicyNumber()
+                : request.getInsurancePolicy().trim();
+
+        Integer existingCount = jdbcTemplate.queryForObject("""
+                SELECT COUNT(*)
+                FROM seguros
+                WHERE nroPoliza = ?
+                """, Integer.class, insurancePolicy);
+
+        if (existingCount != null && existingCount > 0) {
+            throw new OwnerProductValidationException("La póliza indicada ya existe. Elegí otra o reutilizá una válida.");
+        }
+
+        jdbcTemplate.update("""
+                INSERT INTO seguros (nroPoliza, compania, polizaCombinada, importe)
+                VALUES (?, ?, ?, ?)
+                """, insurancePolicy, request.getCompany().trim(),
+                Boolean.TRUE.equals(request.getCombinedPolicy()) ? "si" : "no",
+                request.getAmount());
+
+        insertInsuranceExtension(insurancePolicy, context.ownerId(), nullableTrim(request.getInsurerPhone()));
+        assignInsurancePolicy(context, insurancePolicy);
+
+        return "La póliza " + insurancePolicy + " fue creada y asignada correctamente.";
     }
 
     @Transactional
@@ -480,6 +596,7 @@ public class AuctionManagementService {
                     SELECT TOP 1
                         p.identificador AS product_id,
                         p.duenio AS owner_id,
+                        owner.nombre AS owner_name,
                         COALESCE(pd.titulo, NULLIF(p.descripcionCatalogo, 'No Posee'), p.descripcionCompleta) AS title,
                         CASE
                             WHEN LOWER(COALESCE(pd.esObraDeArte, 'no')) = 'si' THEN 'arte'
@@ -492,8 +609,10 @@ public class AuctionManagementService {
                         COALESCE(ic.precioBase, seg.importe, 0) AS estimated_value,
                         ic.identificador AS auction_item_id,
                         ic.precioBase AS published_base_price,
-                        s.identificador AS auction_id
+                        s.identificador AS auction_id,
+                        p.seguro AS current_insurance_policy
                     FROM productos p
+                    JOIN personas owner ON owner.identificador = p.duenio
                     LEFT JOIN productos_detalle pd ON pd.identificador = p.identificador
                     LEFT JOIN itemsCatalogo ic ON ic.producto = p.identificador
                     LEFT JOIN catalogos c ON c.identificador = ic.catalogo
@@ -517,6 +636,7 @@ public class AuctionManagementService {
                     """, (rs, rowNum) -> new ProductContext(
                     rs.getInt("product_id"),
                     rs.getInt("owner_id"),
+                    rs.getString("owner_name"),
                     rs.getString("title"),
                     rs.getString("category"),
                     nullableInteger(rs, "request_id"),
@@ -524,7 +644,8 @@ public class AuctionManagementService {
                     rs.getInt("photo_count"),
                     rs.getBigDecimal("estimated_value"),
                     rs.getBigDecimal("published_base_price"),
-                    nullableInteger(rs, "auction_id")
+                    nullableInteger(rs, "auction_id"),
+                    rs.getString("current_insurance_policy")
             ), productId);
         } catch (EmptyResultDataAccessException ex) {
             throw new OwnerProductValidationException("No encontramos el producto indicado.");
@@ -730,6 +851,201 @@ public class AuctionManagementService {
         return value == null || value.isBlank();
     }
 
+    private String nullableTrim(String value) {
+        if (value == null) {
+            return null;
+        }
+
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
+    }
+
+    private void ensureInsuranceExists(String insurancePolicy) {
+        Integer count = jdbcTemplate.queryForObject("""
+                SELECT COUNT(*)
+                FROM seguros
+                WHERE nroPoliza = ?
+                """, Integer.class, insurancePolicy);
+
+        if (count == null || count == 0) {
+            throw new OwnerProductValidationException("La póliza indicada no existe.");
+        }
+    }
+
+    private void ensureInsuranceOwnerCompatibility(String insurancePolicy, Integer ownerId) {
+        Integer currentOwner = jdbcTemplate.query("""
+                SELECT duenio
+                FROM seguros_ext
+                WHERE nroPoliza = ?
+                """, rs -> rs.next() ? rs.getInt("duenio") : null, insurancePolicy);
+
+        if (currentOwner == null) {
+            jdbcTemplate.update("""
+                    INSERT INTO seguros_ext (nroPoliza, duenio)
+                    VALUES (?, ?)
+                    """, insurancePolicy, ownerId);
+            return;
+        }
+
+        if (!currentOwner.equals(ownerId)) {
+            throw new OwnerProductValidationException("La póliza ya está asociada a bienes de otro dueño.");
+        }
+    }
+
+    private void ensureApprovedProductForInsurance(ProductContext context) {
+        if (!"aceptado".equalsIgnoreCase(context.requestStatus())) {
+            throw new OwnerProductValidationException("Solo podés asignar una póliza a un producto aprobado.");
+        }
+    }
+
+    private void ensureInsuranceReusableForProduct(String insurancePolicy, Integer productId) {
+        PolicyUsage usage = jdbcTemplate.queryForObject("""
+                SELECT
+                    SUM(CASE WHEN identificador <> ? THEN 1 ELSE 0 END) AS assigned_elsewhere,
+                    SUM(CASE WHEN identificador = ? THEN 1 ELSE 0 END) AS assigned_here
+                FROM productos
+                WHERE seguro = ?
+                """, (rs, rowNum) -> new PolicyUsage(
+                rs.getInt("assigned_elsewhere"),
+                rs.getInt("assigned_here")
+        ), productId, productId, insurancePolicy);
+
+        Integer combinedCount = jdbcTemplate.queryForObject("""
+                SELECT COUNT(*)
+                FROM seguros
+                WHERE nroPoliza = ?
+                  AND polizaCombinada = 'si'
+                """, Integer.class, insurancePolicy);
+
+        boolean isCombined = combinedCount != null && combinedCount > 0;
+        if (usage == null) {
+            return;
+        }
+
+        if (!isCombined && usage.assignedElsewhere() > 0) {
+            throw new OwnerProductValidationException("La póliza elegida no es combinada y ya está en uso por otro producto.");
+        }
+    }
+
+    private void assignInsurancePolicy(ProductContext context, String insurancePolicy) {
+        ensureInsuranceExists(insurancePolicy);
+        ensureInsuranceOwnerCompatibility(insurancePolicy, context.ownerId());
+        ensureInsuranceReusableForProduct(insurancePolicy, context.productId());
+
+        jdbcTemplate.update("""
+                UPDATE productos
+                SET seguro = ?
+                WHERE identificador = ?
+                """, insurancePolicy, context.productId());
+
+        jdbcTemplate.update("""
+                UPDATE productos_ext
+                SET nroPoliza = ?
+                WHERE identificador = ?
+                """, insurancePolicy, context.productId());
+    }
+
+    private void insertInsuranceExtension(String insurancePolicy, Integer ownerId, String insurerPhone) {
+        if (columnExists("seguros_ext", "nroTelefono")) {
+            jdbcTemplate.update("""
+                    INSERT INTO seguros_ext (nroPoliza, duenio, nroTelefono)
+                    VALUES (?, ?, ?)
+                    """, insurancePolicy, ownerId, insurerPhone);
+            return;
+        }
+
+        jdbcTemplate.update("""
+                INSERT INTO seguros_ext (nroPoliza, duenio)
+                VALUES (?, ?)
+                """, insurancePolicy, ownerId);
+
+        if (tableExists("seguros_contacto_ext")) {
+            jdbcTemplate.update("""
+                    INSERT INTO seguros_contacto_ext (nroPoliza, nroTelefono)
+                    VALUES (?, ?)
+                    """, insurancePolicy, insurerPhone);
+        }
+    }
+
+    private String generateInsurancePolicyNumber() {
+        int seed = 1;
+        Integer count = jdbcTemplate.queryForObject("""
+                SELECT COUNT(*)
+                FROM seguros
+                """, Integer.class);
+        if (count != null && count > 0) {
+            seed = count + 1;
+        }
+
+        String candidate = "POL-" + LocalDate.now().getYear() + "-" + String.format("%04d", seed);
+        Set<String> usedCandidates = new HashSet<>();
+        while (usedCandidates.add(candidate) && policyExists(candidate)) {
+            seed++;
+            candidate = "POL-" + LocalDate.now().getYear() + "-" + String.format("%04d", seed);
+        }
+        return candidate;
+    }
+
+    private boolean policyExists(String insurancePolicy) {
+        Integer count = jdbcTemplate.queryForObject("""
+                SELECT COUNT(*)
+                FROM seguros
+                WHERE nroPoliza = ?
+                """, Integer.class, insurancePolicy);
+        return count != null && count > 0;
+    }
+
+    private boolean tableExists(String tableName) {
+        try {
+            Integer count = jdbcTemplate.queryForObject("""
+                    SELECT COUNT(*)
+                    FROM INFORMATION_SCHEMA.TABLES
+                    WHERE TABLE_NAME = ?
+                    """, Integer.class, tableName);
+            return count != null && count > 0;
+        } catch (BadSqlGrammarException ex) {
+            return false;
+        }
+    }
+
+    private boolean columnExists(String tableName, String columnName) {
+        try {
+            Integer count = jdbcTemplate.queryForObject("""
+                    SELECT COUNT(*)
+                    FROM INFORMATION_SCHEMA.COLUMNS
+                    WHERE TABLE_NAME = ?
+                      AND COLUMN_NAME = ?
+                    """, Integer.class, tableName, columnName);
+            return count != null && count > 0;
+        } catch (BadSqlGrammarException ex) {
+            return false;
+        }
+    }
+
+    private String insurerPhoneSelect(String insuranceAlias, String contactAlias) {
+        if (columnExists("seguros_ext", "nroTelefono")) {
+            return insuranceAlias + ".nroTelefono";
+        }
+
+        if (tableExists("seguros_contacto_ext")) {
+            return contactAlias + ".nroTelefono";
+        }
+
+        return "NULL";
+    }
+
+    private String insurerPhoneJoin(String seguroAlias) {
+        if (columnExists("seguros_ext", "nroTelefono")) {
+            return "";
+        }
+
+        if (tableExists("seguros_contacto_ext")) {
+            return "LEFT JOIN seguros_contacto_ext sec ON sec.nroPoliza = " + seguroAlias + ".nroPoliza";
+        }
+
+        return "";
+    }
+
     private String normalizeAuctionCategory(String rawCategory, String fallbackCategory) {
         String normalized = rawCategory == null ? "" : rawCategory.trim().toLowerCase();
         return switch (normalized) {
@@ -777,6 +1093,7 @@ public class AuctionManagementService {
     private record ProductContext(
             Integer productId,
             Integer ownerId,
+            String ownerName,
             String title,
             String category,
             Integer requestId,
@@ -784,8 +1101,11 @@ public class AuctionManagementService {
             Integer photoCount,
             BigDecimal estimatedValue,
             BigDecimal publishedBasePrice,
-            Integer auctionId
+            Integer auctionId,
+            String currentInsurancePolicy
     ) {}
 
     private record ProductLotContext(ProductContext context, BigDecimal basePrice) {}
+
+    private record PolicyUsage(Integer assignedElsewhere, Integer assignedHere) {}
 }
