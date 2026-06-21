@@ -2,6 +2,7 @@ package com.tpo.suby.service;
 
 import com.tpo.suby.dto.request.admin.ApproveUserOnboardingRequest;
 import com.tpo.suby.dto.request.admin.RejectUserOnboardingRequest;
+import com.tpo.suby.dto.request.admin.UpdateUserCategoryRequest;
 import com.tpo.suby.dto.request.ForgotPasswordRequest;
 import com.tpo.suby.dto.request.LoginRequest;
 import com.tpo.suby.dto.request.OnboardingRequest;
@@ -10,6 +11,8 @@ import com.tpo.suby.dto.request.VerifyCodeRequest;
 import com.tpo.suby.dto.response.ApiResponse;
 import com.tpo.suby.dto.response.admin.AdminUserRequestItemResponse;
 import com.tpo.suby.dto.response.admin.AdminUserRequestListResponse;
+import com.tpo.suby.dto.response.admin.AdminManagedUserItemResponse;
+import com.tpo.suby.dto.response.admin.AdminManagedUserListResponse;
 import com.tpo.suby.config.JwtService;
 import com.tpo.suby.entity.OnboardingUsuario;
 import com.tpo.suby.entity.Persona;
@@ -101,6 +104,43 @@ public class AuthService {
                 .build();
     }
 
+    public AdminManagedUserListResponse listManagedUsers() {
+        validateAdminAccess();
+
+        List<AdminManagedUserItemResponse> users = jdbcTemplate.query("""
+                SELECT
+                    c.identificador AS user_id,
+                    p.nombre AS name,
+                    u.email AS email,
+                    p.documento AS document,
+                    COALESCE(c.categoria, 'comun') AS category,
+                    COALESCE(c.admitido, 'no') AS admitted,
+                    COALESCE(guarantee.declared_guarantee, 0) AS declared_guarantee
+                FROM clientes c
+                JOIN personas p ON p.identificador = c.identificador
+                LEFT JOIN usuarios_app u ON u.identificador = c.identificador
+                OUTER APPLY (
+                    SELECT SUM(COALESCE(mdp.montoDisponible, 0)) AS declared_guarantee
+                    FROM mediosDePago mdp
+                    WHERE mdp.cliente = c.identificador
+                ) guarantee
+                ORDER BY p.nombre ASC
+                """, (rs, rowNum) -> AdminManagedUserItemResponse.builder()
+                .userId(rs.getInt("user_id"))
+                .name(rs.getString("name"))
+                .email(rs.getString("email"))
+                .document(rs.getString("document"))
+                .category(rs.getString("category"))
+                .admitted(rs.getString("admitted"))
+                .declaredGuarantee(rs.getBigDecimal("declared_guarantee"))
+                .build());
+
+        return AdminManagedUserListResponse.builder()
+                .users(users)
+                .total(users.size())
+                .build();
+    }
+
     @Transactional
     public String approveAdminUserRequest(Integer requestId, ApproveUserOnboardingRequest request) {
         validateAdminAccess();
@@ -183,6 +223,28 @@ public class AuthService {
         sendRejectionEmail(onboarding, reason);
 
         return "La solicitud fue rechazada.";
+    }
+
+    @Transactional
+    public String updateManagedUserCategory(Integer userId, UpdateUserCategoryRequest request) {
+        validateAdminAccess();
+
+        if (userId == null || userId <= 0) {
+            throw new NotFoundException("Usuario no encontrado.");
+        }
+
+        String category = normalizeClientCategory(request == null ? null : request.getCategory());
+        int updated = jdbcTemplate.update("""
+                UPDATE clientes
+                SET categoria = ?
+                WHERE identificador = ?
+                """, category, userId);
+
+        if (updated == 0) {
+            throw new NotFoundException("Usuario no encontrado.");
+        }
+
+        return "La categoría del usuario fue actualizada a " + category + ".";
     }
 
     public Map<String, Object> logout(String token) {
