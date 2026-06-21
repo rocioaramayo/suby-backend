@@ -12,4 +12,5 @@ public class SubyApplication {
 		SpringApplication.run(SubyApplication.class, args);
 	}
 
+	
 }

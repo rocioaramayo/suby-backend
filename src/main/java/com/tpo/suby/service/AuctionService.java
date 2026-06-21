@@ -38,7 +38,7 @@ public class AuctionService {
     private final JdbcTemplate jdbcTemplate;
     private final AuctionPhotoService auctionPhotoService;
 
-    public AuctionListResponse listAuctions(String category, String status, String search, Integer page, Integer perPage) {
+ public AuctionListResponse listAuctions(String category, String status, String search, Integer page, Integer perPage) {
         int safePage = page == null ? 1 : page;
         int safePerPage = perPage == null ? 10 : perPage;
         validateListFilters(category, status, safePage, safePerPage);
@@ -73,12 +73,14 @@ public class AuctionService {
                     CAST(DATEADD(MINUTE, ?, CAST(s.hora AS DATETIME)) AS TIME) AS end_time,
                     %s AS status,
                     ps.nombre AS auctioneer,
+                    se.moneda AS currency, -- DATO AGREGADO
                     COALESCE(lotes.total_lots, 0) AS total_lots,
                     COALESCE(lotes.sold_lots, 0) AS sold_lots,
                     COALESCE(lotes.active_lots, 0) AS active_lots,
                     thumbnail.item_id AS thumbnail_item_id,
                     thumbnail.photo_id AS thumbnail_photo_id
                 FROM subastas s
+                LEFT JOIN subastas_ext se ON se.identificador = s.identificador -- JOIN AGREGADO
                 LEFT JOIN subastadores sub ON sub.identificador = s.subastador
                 LEFT JOIN personas ps ON ps.identificador = sub.identificador
                 OUTER APPLY (
@@ -125,6 +127,7 @@ public class AuctionService {
                 .endTime(toLocalTime(rs.getTime("end_time")))
                 .status(rs.getString("status"))
                 .auctioneer(rs.getString("auctioneer"))
+                .currency(rs.getString("currency")) 
                 .totalLots(rs.getInt("total_lots"))
                 .soldLots(rs.getInt("sold_lots"))
                 .activeLots(rs.getInt("active_lots"))
@@ -143,117 +146,119 @@ public class AuctionService {
     }
 
     public AuctionDetailResponse getAuctionDetail(Integer auctionId) {
-        if (auctionId == null || auctionId <= 0) {
-            throw new NotFoundException("Subasta no encontrada.");
-        }
+            if (auctionId == null || auctionId <= 0) {
+                throw new NotFoundException("Subasta no encontrada.");
+            }
 
-        AuctionDetailResponse detail;
-        try {
-            detail = jdbcTemplate.queryForObject("""
+            AuctionDetailResponse detail;
+            try {
+                detail = jdbcTemplate.queryForObject("""
+                        SELECT
+                            s.identificador AS id,
+                            COALESCE(c.descripcion, CONCAT('Subasta ', s.identificador)) AS name,
+                            c.identificador AS catalog_id,
+                            c.descripcion AS catalog_description,
+                            s.fecha AS date,
+                            s.hora AS hour,
+                            CAST(DATEADD(MINUTE, ?, CAST(s.hora AS DATETIME)) AS TIME) AS end_time,
+                            %s AS status,
+                            s.categoria AS category,
+                            s.ubicacion AS location,
+                            sub.identificador AS auctioneer_id,
+                            ps.nombre AS auctioneer_name,
+                            sub.matricula AS auctioneer_license
+                        FROM subastas s
+                        LEFT JOIN subastadores sub ON sub.identificador = s.subastador
+                        LEFT JOIN personas ps ON ps.identificador = sub.identificador
+                        OUTER APPLY (
+                            SELECT TOP 1 c.identificador, c.descripcion
+                            FROM catalogos c
+                            WHERE c.subasta = s.identificador
+                            ORDER BY c.identificador ASC
+                        ) c
+                        WHERE s.identificador = ?
+                        """.formatted(AuctionStatusSql.normalizedStatusCase("s.estado", "s.fecha")), (rs, rowNum) -> AuctionDetailResponse.builder()
+                        .id(rs.getInt("id"))
+                        .name(rs.getString("name"))
+                        .date(toLocalDate(rs.getDate("date")))
+                        .hour(toLocalTime(rs.getTime("hour")))
+                        .endTime(toLocalTime(rs.getTime("end_time")))
+                        .status(rs.getString("status"))
+                        .category(rs.getString("category"))
+                        .location(rs.getString("location"))
+                        .auctioneer(AuctioneerResponse.builder()
+                                .id(nullableInt(rs, "auctioneer_id"))
+                                .name(rs.getString("auctioneer_name"))
+                                .license(rs.getString("auctioneer_license"))
+                                .build())
+                        .catalog(AuctionCatalogResponse.builder()
+                                .id(nullableInt(rs, "catalog_id"))
+                                .description(rs.getString("catalog_description"))
+                                .items(List.of())
+                                .build())
+                        .build(), AUCTION_DURATION_MINUTES, auctionId);
+            } catch (EmptyResultDataAccessException ex) {
+                throw new NotFoundException("Subasta no encontrada.");
+            }
+
+            List<AuctionCatalogItemResponse> items = jdbcTemplate.query("""
                     SELECT
-                        s.identificador AS id,
-                        COALESCE(c.descripcion, CONCAT('Subasta ', s.identificador)) AS name,
-                        c.identificador AS catalog_id,
-                        c.descripcion AS catalog_description,
-                        s.fecha AS date,
-                        s.hora AS hour,
-                        CAST(DATEADD(MINUTE, ?, CAST(s.hora AS DATETIME)) AS TIME) AS end_time,
-                        %s AS status,
-                        s.categoria AS category,
-                        s.ubicacion AS location,
-                        sub.identificador AS auctioneer_id,
-                        ps.nombre AS auctioneer_name,
-                        sub.matricula AS auctioneer_license
-                    FROM subastas s
-                    LEFT JOIN subastadores sub ON sub.identificador = s.subastador
-                    LEFT JOIN personas ps ON ps.identificador = sub.identificador
+                        ic.identificador AS item_id,
+                        CONCAT('LOT-', RIGHT(CONCAT('000', ic.identificador), 3)) AS lot_code,
+                        p.descripcionCompleta AS title,
+                        CAST(NULL AS VARCHAR(250)) AS attribution,
+                        owner.nombre AS owner,
+                        ic.precioBase AS base_price,
+                        thumbnail.photo_id AS thumbnail_photo_id,
+                        pd.categoriaTematica AS category,
+                        se.moneda AS currency -- DATO AGREGADO
+                    FROM catalogos c
+                    JOIN itemsCatalogo ic ON ic.catalogo = c.identificador
+                    JOIN productos p ON p.identificador = ic.producto
+                    LEFT JOIN duenios d ON d.identificador = p.duenio
+                    LEFT JOIN personas owner ON owner.identificador = d.identificador
+                    LEFT JOIN productos_detalle pd ON pd.identificador = p.identificador
+                    LEFT JOIN subastas_ext se ON se.identificador = c.subasta -- JOIN AGREGADO
                     OUTER APPLY (
-                        SELECT TOP 1 c.identificador, c.descripcion
-                        FROM catalogos c
-                        WHERE c.subasta = s.identificador
-                        ORDER BY c.identificador ASC
-                    ) c
-                    WHERE s.identificador = ?
-                    """.formatted(AuctionStatusSql.normalizedStatusCase("s.estado", "s.fecha")), (rs, rowNum) -> AuctionDetailResponse.builder()
-                    .id(rs.getInt("id"))
-                    .name(rs.getString("name"))
-                    .date(toLocalDate(rs.getDate("date")))
-                    .hour(toLocalTime(rs.getTime("hour")))
-                    .endTime(toLocalTime(rs.getTime("end_time")))
-                    .status(rs.getString("status"))
-                    .category(rs.getString("category"))
-                    .location(rs.getString("location"))
-                    .auctioneer(AuctioneerResponse.builder()
-                            .id(nullableInt(rs, "auctioneer_id"))
-                            .name(rs.getString("auctioneer_name"))
-                            .license(rs.getString("auctioneer_license"))
-                            .build())
+                        SELECT TOP 1 f.identificador AS photo_id
+                        FROM fotos f
+                        WHERE f.producto = p.identificador
+                        ORDER BY f.identificador ASC
+                    ) thumbnail
+                    WHERE c.subasta = ?
+                    ORDER BY ic.identificador ASC
+                    """, (rs, rowNum) -> AuctionCatalogItemResponse.builder()
+                    .itemId(rs.getInt("item_id"))
+                    .lotCode(rs.getString("lot_code"))
+                    .title(rs.getString("title"))
+                    .attribution(rs.getString("attribution"))
+                    .owner(rs.getString("owner"))
+                    .category(rs.getString("category")) 
+                    .currency(rs.getString("currency")) 
+                    .basePrice(rs.getBigDecimal("base_price"))
+                    .thumbnailUrl(auctionPhotoService.buildItemPhotoUrl(
+                            rs.getInt("item_id"),
+                            nullableInt(rs, "thumbnail_photo_id")
+                    ))
+                    .build(), auctionId);
+
+            return AuctionDetailResponse.builder()
+                    .id(detail.getId())
+                    .name(detail.getName())
+                    .date(detail.getDate())
+                    .hour(detail.getHour())
+                    .endTime(detail.getEndTime())
+                    .status(detail.getStatus())
+                    .category(detail.getCategory())
+                    .location(detail.getLocation())
+                    .auctioneer(detail.getAuctioneer())
                     .catalog(AuctionCatalogResponse.builder()
-                            .id(nullableInt(rs, "catalog_id"))
-                            .description(rs.getString("catalog_description"))
-                            .items(List.of())
+                            .id(detail.getCatalog().getId())
+                            .description(detail.getCatalog().getDescription())
+                            .items(items)
                             .build())
-                    .build(), AUCTION_DURATION_MINUTES, auctionId);
-        } catch (EmptyResultDataAccessException ex) {
-            throw new NotFoundException("Subasta no encontrada.");
+                    .build();
         }
-
-        List<AuctionCatalogItemResponse> items = jdbcTemplate.query("""
-                SELECT
-                    ic.identificador AS item_id,
-                    CONCAT('LOT-', RIGHT(CONCAT('000', ic.identificador), 3)) AS lot_code,
-                    p.descripcionCompleta AS title,
-                    CAST(NULL AS VARCHAR(250)) AS attribution,
-                    owner.nombre AS owner,
-                    ic.precioBase AS base_price,
-                    thumbnail.photo_id AS thumbnail_photo_id,
-                    pd.categoriaTematica AS category -- AQUI AGREGAMOS LA CATEGORIA TEMATICA
-                FROM catalogos c
-                JOIN itemsCatalogo ic ON ic.catalogo = c.identificador
-                JOIN productos p ON p.identificador = ic.producto
-                LEFT JOIN duenios d ON d.identificador = p.duenio
-                LEFT JOIN personas owner ON owner.identificador = d.identificador
-                LEFT JOIN productos_detalle pd ON pd.identificador = p.identificador -- AQUI AGREGAMOS EL JOIN
-                OUTER APPLY (
-                    SELECT TOP 1 f.identificador AS photo_id
-                    FROM fotos f
-                    WHERE f.producto = p.identificador
-                    ORDER BY f.identificador ASC
-                ) thumbnail
-                WHERE c.subasta = ?
-                ORDER BY ic.identificador ASC
-                """, (rs, rowNum) -> AuctionCatalogItemResponse.builder()
-                .itemId(rs.getInt("item_id"))
-                .lotCode(rs.getString("lot_code"))
-                .title(rs.getString("title"))
-                .attribution(rs.getString("attribution"))
-                .owner(rs.getString("owner"))
-                .category(rs.getString("category")) // AQUI MAPEAMOS AL DTO
-                .basePrice(rs.getBigDecimal("base_price"))
-                .thumbnailUrl(auctionPhotoService.buildItemPhotoUrl(
-                        rs.getInt("item_id"),
-                        nullableInt(rs, "thumbnail_photo_id")
-                ))
-                .build(), auctionId);
-
-        return AuctionDetailResponse.builder()
-                .id(detail.getId())
-                .name(detail.getName())
-                .date(detail.getDate())
-                .hour(detail.getHour())
-                .endTime(detail.getEndTime())
-                .status(detail.getStatus())
-                .category(detail.getCategory())
-                .location(detail.getLocation())
-                .auctioneer(detail.getAuctioneer())
-                .catalog(AuctionCatalogResponse.builder()
-                        .id(detail.getCatalog().getId())
-                        .description(detail.getCatalog().getDescription())
-                        .items(items)
-                        .build())
-                .build();
-    }
-
     public LotDetailResponse getLotDetail(Integer auctionId, Integer itemId) {
         if (auctionId == null || auctionId <= 0 || itemId == null || itemId <= 0) {
             throw new LotNotFoundException("Lote no encontrado.");

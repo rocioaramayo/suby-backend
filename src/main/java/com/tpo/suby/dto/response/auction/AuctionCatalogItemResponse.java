@@ -19,6 +19,8 @@ public class AuctionCatalogItemResponse {
 
     private String title;
 
+    private String currency;
+
     private String attribution;
 
     private String owner;

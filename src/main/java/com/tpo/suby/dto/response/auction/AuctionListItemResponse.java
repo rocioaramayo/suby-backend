@@ -17,7 +17,8 @@ public class AuctionListItemResponse {
     private String name;
 
     private String category;
-
+    
+    private String currency;
 
     private LocalDate date;
 
