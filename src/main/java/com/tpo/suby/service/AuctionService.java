@@ -211,6 +211,7 @@ public class AuctionService {
                         ic.precioBase AS base_price,
                         thumbnail.photo_id AS thumbnail_photo_id,
                         pd.categoriaTematica AS category,
+                        COALESCE(ic.subastado, 'no') AS auctioned,
                         se.moneda AS currency -- DATO AGREGADO
                     FROM catalogos c
                     JOIN itemsCatalogo ic ON ic.catalogo = c.identificador
@@ -234,6 +235,7 @@ public class AuctionService {
                     .attribution(rs.getString("attribution"))
                     .owner(rs.getString("owner"))
                     .category(rs.getString("category")) 
+                    .auctioned(rs.getString("auctioned"))
                     .currency(rs.getString("currency")) 
                     .basePrice(rs.getBigDecimal("base_price"))
                     .thumbnailUrl(auctionPhotoService.buildItemPhotoUrl(

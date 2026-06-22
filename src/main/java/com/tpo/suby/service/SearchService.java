@@ -98,25 +98,33 @@ public class SearchService {
                     ic.identificador AS item_id,
                     CONCAT('LOT-', RIGHT(CONCAT('000', ic.identificador), 3)) AS lot_code,
                     COALESCE(p.descripcionCatalogo, p.descripcionCompleta) AS title,
-                    s.identificador AS auction_id
+                    s.identificador AS auction_id,
+                    pd.categoriaTematica AS category,
+                    COALESCE(ic.subastado, 'no') AS auctioned
                 FROM itemsCatalogo ic
                 JOIN productos p ON p.identificador = ic.producto
                 JOIN catalogos c ON c.identificador = ic.catalogo
                 JOIN subastas s ON s.identificador = c.subasta
+                LEFT JOIN productos_detalle pd ON pd.identificador = p.identificador
                 LEFT JOIN duenios d ON d.identificador = p.duenio
                 LEFT JOIN personas owner ON owner.identificador = d.identificador
                 WHERE
-                    LOWER(COALESCE(p.descripcionCatalogo, '')) LIKE ?
-                    OR LOWER(COALESCE(p.descripcionCompleta, '')) LIKE ?
-                    OR LOWER(COALESCE(c.descripcion, '')) LIKE ?
-                    OR LOWER(COALESCE(owner.nombre, '')) LIKE ?
-                    OR LOWER(CONCAT('lot-', RIGHT(CONCAT('000', ic.identificador), 3))) LIKE ?
+                    COALESCE(ic.subastado, 'no') <> 'si'
+                    AND (
+                        LOWER(COALESCE(p.descripcionCatalogo, '')) LIKE ?
+                        OR LOWER(COALESCE(p.descripcionCompleta, '')) LIKE ?
+                        OR LOWER(COALESCE(c.descripcion, '')) LIKE ?
+                        OR LOWER(COALESCE(owner.nombre, '')) LIKE ?
+                        OR LOWER(CONCAT('lot-', RIGHT(CONCAT('000', ic.identificador), 3))) LIKE ?
+                    )
                 ORDER BY s.fecha ASC, ic.identificador ASC
                 """, (rs, rowNum) -> SearchLotItemResponse.builder()
                 .itemId(rs.getInt("item_id"))
                 .lotCode(rs.getString("lot_code"))
                 .title(rs.getString("title"))
                 .auctionId(rs.getInt("auction_id"))
+                .category(rs.getString("category"))
+                .auctioned(rs.getString("auctioned"))
                 .build(), like, like, like, like, like);
     }
 

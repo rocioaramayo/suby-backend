@@ -27,6 +27,9 @@ public class AuctionCatalogItemResponse {
 
     private String category;
 
+    @JsonProperty("auctioned")
+    private String auctioned;
+
     @JsonProperty("base_price")
     private BigDecimal basePrice;
 

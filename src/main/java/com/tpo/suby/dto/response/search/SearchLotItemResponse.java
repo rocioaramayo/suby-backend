@@ -18,4 +18,9 @@ public class SearchLotItemResponse {
 
     @JsonProperty("auction_id")
     private Integer auctionId;
+
+    private String category;
+
+    @JsonProperty("auctioned")
+    private String auctioned;
 }
