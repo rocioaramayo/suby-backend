@@ -260,7 +260,7 @@ public class BidRoomService {
         }
     }
 
-    public BidResultResponse bidResult(Integer auctionId, Integer itemId) {
+   public BidResultResponse bidResult(Integer auctionId, Integer itemId) {
         if (auctionId == null || auctionId <= 0 || itemId == null || itemId <= 0) {
             throw new BidResultNotFoundException("Bid result not found.");
         }
@@ -284,8 +284,10 @@ public class BidRoomService {
                         COALESCE(c.descripcion, CONCAT('Subasta ', s.identificador)) AS auction_name,
                         auctioneer_person.nombre AS auctioneer,
                         s.fecha AS auction_date,
-                        s.hora AS auction_time
+                        s.hora AS auction_time,
+                        se.moneda AS currency -- DATO AGREGADO
                     FROM subastas s
+                    LEFT JOIN subastas_ext se ON se.identificador = s.identificador 
                     JOIN catalogos c ON c.subasta = s.identificador
                     JOIN itemsCatalogo ic ON ic.catalogo = c.identificador
                     JOIN productos p ON p.identificador = ic.producto
@@ -352,6 +354,7 @@ public class BidRoomService {
                         .auctionId(rs.getInt("auction_id"))
                         .auctionName(rs.getString("auction_name"))
                         .auctioneer(rs.getString("auctioneer"))
+                        .currency(rs.getString("currency")) 
                         .auctionedAt(auctionedAt.atZone(ZoneId.systemDefault()).toInstant().toString())
                         .build();
             }, auctionId, itemId);
@@ -359,7 +362,6 @@ public class BidRoomService {
             throw new BidResultNotFoundException("Bid result not found.");
         }
     }
-
     private UsuarioApp authenticatedUser() {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
         if (authentication == null || !authentication.isAuthenticated()

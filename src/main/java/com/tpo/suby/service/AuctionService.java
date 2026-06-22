@@ -261,6 +261,7 @@ public class AuctionService {
                             .build())
                     .build();
         }
+
     public LotDetailResponse getLotDetail(Integer auctionId, Integer itemId) {
         if (auctionId == null || auctionId <= 0 || itemId == null || itemId <= 0) {
             throw new LotNotFoundException("Lote no encontrado.");
@@ -289,8 +290,10 @@ public class AuctionService {
                         COALESCE(c.descripcion, CONCAT('Subasta ', s.identificador)) AS auction_name,
                         s.fecha AS auction_date,
                         auctioneer_person.nombre AS auctioneer,
-                        s.ubicacion AS auction_location
+                        s.ubicacion AS auction_location,
+                        se.moneda AS currency -- DATO AGREGADO
                     FROM subastas s
+                    LEFT JOIN subastas_ext se ON se.identificador = s.identificador -- JOIN AGREGADO
                     JOIN catalogos c ON c.subasta = s.identificador
                     JOIN itemsCatalogo ic ON ic.catalogo = c.identificador
                     JOIN productos p ON p.identificador = ic.producto
@@ -325,6 +328,7 @@ public class AuctionService {
                     .currentOffer(rs.getBigDecimal("current_offer"))
                     .auctioned(rs.getString("auctioned"))
                     .owner(rs.getString("owner"))
+                    .currency(rs.getString("currency")) // MAPEO AL DTO AGREGADO
                     .image(auctionPhotoService.buildItemPhotoUrl(
                             rs.getInt("item_id"),
                             nullableInt(rs, "thumbnail_photo_id")

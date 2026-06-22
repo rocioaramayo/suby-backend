@@ -1,10 +1,11 @@
 package com.tpo.suby.dto.response.bid;
 
+import java.math.BigDecimal;
+
 import com.fasterxml.jackson.annotation.JsonProperty;
+
 import lombok.Builder;
 import lombok.Getter;
-
-import java.math.BigDecimal;
 
 @Getter
 @Builder
@@ -17,6 +18,8 @@ public class BidResultResponse {
     private String lotCode;
 
     private String title;
+
+    private String currency;
 
     @JsonProperty("winning_bid")
     private BigDecimal winningBid;

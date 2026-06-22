@@ -1,11 +1,12 @@
 package com.tpo.suby.dto.response.auction;
 
-import com.fasterxml.jackson.annotation.JsonProperty;
-import lombok.Builder;
-import lombok.Getter;
-
 import java.math.BigDecimal;
 import java.util.List;
+
+import com.fasterxml.jackson.annotation.JsonProperty;
+
+import lombok.Builder;
+import lombok.Getter;
 
 @Getter
 @Builder
@@ -20,6 +21,8 @@ public class LotDetailResponse {
     private String title;
 
     private String category;
+
+    private String currency;
 
     private String artist;
 

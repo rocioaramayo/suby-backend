@@ -1,11 +1,12 @@
 package com.tpo.suby.dto.response.home;
 
-import com.fasterxml.jackson.annotation.JsonProperty;
-import lombok.Builder;
-import lombok.Getter;
-
 import java.math.BigDecimal;
 import java.time.LocalDate;
+
+import com.fasterxml.jackson.annotation.JsonProperty;
+
+import lombok.Builder;
+import lombok.Getter;
 
 @Getter
 @Builder
@@ -23,6 +24,8 @@ public class FeaturedLotResponse {
     private BigDecimal basePrice;
 
     private String category;
+    
+    private String currency;
 
     @JsonProperty("auction_id")
     private Integer auctionId;

@@ -28,7 +28,7 @@ public class HomeService {
                 .build();
     }
 
-    private List<FeaturedLotResponse> getFeaturedLots() {
+   private List<FeaturedLotResponse> getFeaturedLots() {
         String sql = """
                 SELECT TOP 10
                     ic.identificador AS item_id,
@@ -41,11 +41,13 @@ public class HomeService {
                     ps.nombre AS auctioneer,
                     s.fecha AS auction_date,
                     %s AS status,
+                    se.moneda AS currency, -- DATO AGREGADO
                     thumbnail.photo_id AS thumbnail_photo_id
                 FROM itemsCatalogo ic
                 JOIN productos p ON p.identificador = ic.producto
                 JOIN catalogos c ON c.identificador = ic.catalogo
                 JOIN subastas s ON s.identificador = c.subasta
+                LEFT JOIN subastas_ext se ON se.identificador = s.identificador -- JOIN AGREGADO
                 LEFT JOIN subastadores sub ON sub.identificador = s.subastador
                 LEFT JOIN personas ps ON ps.identificador = sub.identificador
                 OUTER APPLY (
@@ -73,6 +75,7 @@ public class HomeService {
                 .auctioneer(rs.getString("auctioneer"))
                 .auctionDate(toLocalDate(rs.getDate("auction_date")))
                 .status(rs.getString("status"))
+                .currency(rs.getString("currency")) // MAPEO AL DTO AGREGADO
                 .image(auctionPhotoService.buildItemPhotoUrl(
                         rs.getInt("item_id"),
                         nullableInt(rs, "thumbnail_photo_id")
