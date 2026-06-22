@@ -102,15 +102,17 @@ public class BidRoomService {
 
         BigDecimal activeBasePrice = activeBasePriceForAuction(auctionId);
         if (activeBasePrice != null) {
-            BigDecimal availableBalance = selectedPaymentMethod.availableAmount().subtract(selectedPaymentMethod.usedAmount());
-            if (availableBalance.compareTo(activeBasePrice) < 0) {
-                upsertActiveSession(user.getIdentificador(), auction.id());
-                return observerAccess(
-                        auctionId,
-                        client.id(),
-                        "Tu saldo disponible es insuficiente para pujar en esta subasta. Podes ingresar como observador."
-                );
-            }
+            BigDecimal availableBalance = selectedPaymentMethod.availableAmount()
+                .subtract(selectedPaymentMethod.usedAmount())
+                .subtract(selectedPaymentMethod.committedAmount());   // NUEVO
+                if (availableBalance.compareTo(activeBasePrice) < 0) {
+                    upsertActiveSession(user.getIdentificador(), auction.id());
+                    return observerAccess(
+                            auctionId,
+                            client.id(),
+                            "Tu saldo disponible es insuficiente para pujar en esta subasta. Podes ingresar como observador."
+                    );
+                }
         }
 
         if (attendeeExists(auctionId, client.id())) {
@@ -476,13 +478,28 @@ public class BidRoomService {
                         mdp.moneda AS currency,
                         COALESCE(mdp.montoDisponible, 0) AS available_amount,
                         COALESCE(mdp.montoUsado, 0) AS used_amount,
+                        COALESCE((
+                            SELECT SUM(pj.importe)
+                            FROM pujos pj
+                            JOIN pujos_medios_de_pago pmp2 ON pmp2.id_pujo = pj.identificador
+                            JOIN asistentes a               ON a.identificador = pj.asistente
+                            JOIN itemsCatalogo ic           ON ic.identificador = pj.item
+                            LEFT JOIN registroDeSubasta rds ON rds.producto = ic.producto
+                                                        AND rds.cliente  = a.cliente
+                            LEFT JOIN pagos pg              ON pg.registroSubasta = rds.identificador
+                                                        AND pg.medioPago = mdp.identificador
+                                                        AND pg.estado IN ('pendiente','procesando','confirmado')
+                            WHERE pj.ganador = 'si'
+                            AND pmp2.id_medio_de_pago = mdp.identificador
+                            AND pg.identificador IS NULL
+                        ), 0) AS committed_amount,
                         COALESCE(tc.esInternacional, 'no') AS international_card,
                         cc.subasta AS check_auction_id
                     FROM mediosDePago mdp
                     LEFT JOIN tarjetasCredito tc ON tc.identificador = mdp.identificador
                     LEFT JOIN chequesCertificados cc ON cc.identificador = mdp.identificador
                     WHERE mdp.identificador = ?
-                      AND mdp.cliente = ?
+                    AND mdp.cliente = ?
                     """, (rs, rowNum) -> {
                 String dbType = rs.getString("db_type");
                 String status = rs.getString("status");
@@ -517,6 +534,7 @@ public class BidRoomService {
                         status,
                         availableAmount,
                         usedAmount,
+                        rs.getBigDecimal("committed_amount"),
                         canBid,
                         reason
                 );
@@ -863,21 +881,22 @@ public class BidRoomService {
     }
 
     private record PaymentMethodState(
-            Integer id,
-            String dbType,
-            String status,
-            BigDecimal availableAmount,
-            BigDecimal usedAmount,
-            boolean canBid,
-            String readOnlyReason
-    ) {
-        private boolean hasFundsFor(BigDecimal amount) {
-            if ("tarjeta_credito".equals(dbType) || "cuenta_bancaria".equals(dbType) || "cheque_certificado".equals(dbType)) {
-                return availableAmount.subtract(usedAmount).compareTo(amount) >= 0;
-            }
-            return false;
+        Integer id,
+        String dbType,
+        String status,
+        BigDecimal availableAmount,
+        BigDecimal usedAmount,
+        BigDecimal committedAmount,
+        boolean canBid,
+        String readOnlyReason
+) {
+    private boolean hasFundsFor(BigDecimal amount) {
+        if ("tarjeta_credito".equals(dbType) || "cuenta_bancaria".equals(dbType) || "cheque_certificado".equals(dbType)) {
+            return availableAmount.subtract(usedAmount).subtract(committedAmount).compareTo(amount) >= 0;
         }
+        return false;
     }
+}
 
     private record ActiveSessionInfo(
             Integer auctionId,
