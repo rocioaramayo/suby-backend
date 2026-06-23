@@ -1,6 +1,7 @@
 package com.tpo.suby.service;
 
 import lombok.extern.slf4j.Slf4j;
+import jakarta.annotation.PostConstruct;
 import org.springframework.stereotype.Service;
 
 import java.net.URI;
@@ -20,13 +21,28 @@ public class ResendEmailService {
 
     private final HttpClient httpClient = HttpClient.newHttpClient();
 
+    @PostConstruct
+    void logConfiguration() {
+        String apiKey = System.getenv("RESEND_API_KEY");
+        String from = System.getenv("RESEND_FROM");
+        log.info("Resend configured: apiKeyPresent={}, from={}",
+                apiKey != null && !apiKey.isBlank(),
+                from == null || from.isBlank() ? "onboarding@resend.dev" : from);
+    }
+
     public void send(String to, String subject, String html) {
         send(defaultFrom(), to, subject, html);
     }
 
     public void send(String from, String to, String subject, String html) {
         String apiKey = System.getenv("RESEND_API_KEY");
+        String envFrom = System.getenv("RESEND_FROM");
+        log.info("Resend send requested: apiKeyPresent={}, envFrom={}, from={}",
+                apiKey != null && !apiKey.isBlank(),
+                envFrom == null || envFrom.isBlank() ? "onboarding@resend.dev" : envFrom,
+                from);
         if (apiKey == null || apiKey.isBlank() || apiKey.contains("re_xxxxxxxxx")) {
+            log.error("Missing RESEND_API_KEY at runtime");
             throw new IllegalStateException("Configurá resend.api-key con tu clave real de Resend.");
         }
 
