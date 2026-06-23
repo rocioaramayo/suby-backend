@@ -52,7 +52,7 @@ public class UserBidService {
     private final UsuarioAppRepository usuarioAppRepository;
     private final PrivateMessageService privateMessageService;
     private final UserCategoryService userCategoryService;
-    private final ResendEmailService resendEmailService;
+    private final GmailEmailService gmailEmailService;
 
     public UserBidHistoryResponse getBidHistory(Integer userId) {
         validateOwner(userId);
@@ -686,23 +686,30 @@ public class UserBidService {
                 );
 
         try {
-            resendEmailService.send(
+            gmailEmailService.send(
                     recipientEmail,
                     "Pago confirmado - " + defaultText(wonBid.lotCode()),
                     """
-                            <p>Hola,</p>
-                            <p>Confirmamos el pago de tu compra en Suby.</p>
-                            <p><strong>Lote:</strong> %s<br/>
-                            <strong>Articulo:</strong> %s<br/>
-                            <strong>Subasta:</strong> %s<br/>
-                            <strong>Puja ganadora:</strong> %s<br/>
-                            <strong>Comision:</strong> %s<br/>
-                            <strong>Envio:</strong> %s<br/>
-                            <strong>Total abonado:</strong> %s</p>
-                            <p><strong>Modalidad de entrega:</strong><br/>%s</p>
-                            <p>Podes revisar el detalle completo desde la app.</p>
-                            <p>Saludos,<br/>Equipo Suby</p>
-                            """.formatted(
+Hola,
+
+Confirmamos el pago de tu compra en Suby.
+
+Lote: %s
+Articulo: %s
+Subasta: %s
+Puja ganadora: %s
+Comision: %s
+Envio: %s
+Total abonado: %s
+
+Modalidad de entrega:
+%s
+
+Podes revisar el detalle completo desde la app.
+
+Saludos,
+Equipo Suby
+""".formatted(
                             defaultText(wonBid.lotCode()),
                             defaultText(wonBid.title()),
                             defaultText(wonBid.auctionName()),

@@ -64,7 +64,7 @@ public class AuthService {
     private final RevokedTokenRepository revokedTokenRepository;
     private final AuthenticationManager authenticationManager;
     private final PasswordEncoder passwordEncoder;
-    private final ResendEmailService resendEmailService;
+    private final GmailEmailService gmailEmailService;
     private final JdbcTemplate jdbcTemplate;
     private final PrivateMessageService privateMessageService;
 
@@ -291,14 +291,16 @@ public class AuthService {
         usuarioRepository.save(usuario);
 
         try {
-            resendEmailService.send(
+            gmailEmailService.send(
                     usuario.getEmail(),
                     "Código de recuperación - Suby",
                     """
-                            <p>Tu código de recuperación es:</p>
-                            <p><strong>%s</strong></p>
-                            <p>El código vence en 15 minutos.</p>
-                            """.formatted(code)
+    Tu código de recuperación es:
+
+    %s
+
+    El código vence en 15 minutos.
+    """.formatted(code)
             );
         } catch (Exception e) {
             throw new RuntimeException(
@@ -508,15 +510,19 @@ public class AuthService {
 
             onboardingUsuarioRepository.save(onboarding);
 
-                resendEmailService.send(
+                gmailEmailService.send(
                         email,
                         "Solicitud recibida - Suby",
                         """
-                                <p>Hola %s,</p>
-                                <p>Recibimos correctamente tu solicitud de registro en Suby.</p>
-                                <p>Nuestro equipo revisará la documentación enviada dentro de las próximas 24-72 hs.</p>
-                                <p>Saludos,<br/>Equipo Suby</p>
-                                """.formatted(request.getName())
+Hola %s,
+
+Recibimos correctamente tu solicitud de registro en Suby.
+
+Nuestro equipo revisará la documentación enviada dentro de las próximas 24-72 hs.
+
+Saludos,
+Equipo Suby
+""".formatted(request.getName())
                 );
         } catch (IOException e) {
             throw new RuntimeException("Bad request", e);
@@ -588,18 +594,24 @@ public class AuthService {
                 }
 
                 try {
-                    resendEmailService.send(
+                    gmailEmailService.send(
                             onboarding.getEmail(),
                             "Cuenta aprobada - Suby",
                             """
-                                    <p>Hola %s,</p>
-                                    <p>Tu solicitud de registro fue aprobada correctamente.</p>
-                                    <p>Ya podés ingresar a Suby utilizando las siguientes credenciales temporales:</p>
-                                    <p><strong>Email:</strong> %s<br/>
-                                    <strong>Contraseña temporal:</strong> %s</p>
-                                    <p>Por seguridad, al iniciar sesión por primera vez se te solicitará cambiar la contraseña.</p>
-                                    <p>Saludos,<br/>Equipo Suby</p>
-                                    """.formatted(
+Hola %s,
+
+Tu solicitud de registro fue aprobada correctamente.
+
+Ya podés ingresar a Suby utilizando las siguientes credenciales temporales:
+
+Email: %s
+Contraseña temporal: %s
+
+Por seguridad, al iniciar sesión por primera vez se te solicitará cambiar la contraseña.
+
+Saludos,
+Equipo Suby
+""".formatted(
                                     onboarding.getNombre(),
                                     onboarding.getEmail(),
                                     tempPassword
@@ -768,26 +780,37 @@ public class AuthService {
 
     private void sendApprovalEmail(OnboardingUsuario onboarding, String tempPassword, String category) {
         try {
-            resendEmailService.send(
+            gmailEmailService.send(
                     onboarding.getEmail(),
                     "Cuenta aprobada - Suby",
                     tempPassword == null
                             ? """
-                                    <p>Hola %s,</p>
-                                    <p>Tu solicitud fue aprobada correctamente.</p>
-                                    <p>El equipo de Suby te asignó la categoría <strong>%s</strong>.</p>
-                                    <p>Saludos,<br/>Equipo Suby</p>
-                                    """.formatted(onboarding.getNombre(), normalizeClientCategory(category))
+Hola %s,
+
+Tu solicitud fue aprobada correctamente.
+
+El equipo de Suby te asignó la categoría %s.
+
+Saludos,
+Equipo Suby
+""".formatted(onboarding.getNombre(), normalizeClientCategory(category))
                             : """
-                                    <p>Hola %s,</p>
-                                    <p>Tu solicitud fue aprobada correctamente.</p>
-                                    <p>El equipo de Suby te asignó la categoría <strong>%s</strong>.</p>
-                                    <p>Ya podés ingresar a Suby utilizando las siguientes credenciales temporales:</p>
-                                    <p><strong>Email:</strong> %s<br/>
-                                    <strong>Contraseña temporal:</strong> %s</p>
-                                    <p>Por seguridad, al iniciar sesión por primera vez se te solicitará cambiar la contraseña.</p>
-                                    <p>Saludos,<br/>Equipo Suby</p>
-                                    """.formatted(onboarding.getNombre(), normalizeClientCategory(category), onboarding.getEmail(), tempPassword)
+Hola %s,
+
+Tu solicitud fue aprobada correctamente.
+
+El equipo de Suby te asignó la categoría %s.
+
+Ya podés ingresar a Suby utilizando las siguientes credenciales temporales:
+
+Email: %s
+Contraseña temporal: %s
+
+Por seguridad, al iniciar sesión por primera vez se te solicitará cambiar la contraseña.
+
+Saludos,
+Equipo Suby
+""".formatted(onboarding.getNombre(), normalizeClientCategory(category), onboarding.getEmail(), tempPassword)
             );
         } catch (Exception e) {
             log.warn("Failed to send admin approval email to {}", onboarding.getEmail(), e);
@@ -796,16 +819,21 @@ public class AuthService {
 
     private void sendRejectionEmail(OnboardingUsuario onboarding, String reason) {
         try {
-            resendEmailService.send(
+            gmailEmailService.send(
                     onboarding.getEmail(),
                     "Solicitud rechazada - Suby",
                     """
-                            <p>Hola %s,</p>
-                            <p>Tu solicitud no pudo ser aprobada.</p>
-                            <p><strong>Motivo:</strong> %s</p>
-                            <p>Si querés, podés volver a enviar la documentación con la información corregida.</p>
-                            <p>Saludos,<br/>Equipo Suby</p>
-                            """.formatted(onboarding.getNombre(), reason)
+Hola %s,
+
+Tu solicitud no pudo ser aprobada.
+
+Motivo: %s
+
+Si querés, podés volver a enviar la documentación con la información corregida.
+
+Saludos,
+Equipo Suby
+""".formatted(onboarding.getNombre(), reason)
             );
         } catch (Exception e) {
             log.warn("Failed to send rejection email to {}", onboarding.getEmail(), e);
