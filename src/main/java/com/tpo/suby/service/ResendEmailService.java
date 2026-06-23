@@ -1,7 +1,6 @@
 package com.tpo.suby.service;
 
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.net.URI;
@@ -21,17 +20,12 @@ public class ResendEmailService {
 
     private final HttpClient httpClient = HttpClient.newHttpClient();
 
-    @Value("${resend.api-key}")
-    private String apiKey;
-
-    @Value("${resend.from}")
-    private String defaultFrom;
-
     public void send(String to, String subject, String html) {
-        send(defaultFrom, to, subject, html);
+        send(defaultFrom(), to, subject, html);
     }
 
     public void send(String from, String to, String subject, String html) {
+        String apiKey = System.getenv("RESEND_API_KEY");
         if (apiKey == null || apiKey.isBlank() || apiKey.contains("re_xxxxxxxxx")) {
             throw new IllegalStateException("Configurá resend.api-key con tu clave real de Resend.");
         }
@@ -59,6 +53,11 @@ public class ResendEmailService {
         } catch (Exception e) {
             throw new RuntimeException("No se pudo enviar el correo con Resend.", e);
         }
+    }
+
+    private String defaultFrom() {
+        String from = System.getenv("RESEND_FROM");
+        return from == null || from.isBlank() ? "onboarding@resend.dev" : from;
     }
 
     private String json(Map<String, Object> data) {
