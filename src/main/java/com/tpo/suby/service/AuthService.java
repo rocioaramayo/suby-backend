@@ -35,8 +35,6 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Sort;
 import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.mail.SimpleMailMessage;
-import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -66,7 +64,7 @@ public class AuthService {
     private final RevokedTokenRepository revokedTokenRepository;
     private final AuthenticationManager authenticationManager;
     private final PasswordEncoder passwordEncoder;
-    private final JavaMailSender mailSender;
+    private final ResendEmailService resendEmailService;
     private final JdbcTemplate jdbcTemplate;
     private final PrivateMessageService privateMessageService;
 
@@ -292,20 +290,16 @@ public class AuthService {
         usuario.setTokenExpira(LocalDateTime.now().plusMinutes(15));
         usuarioRepository.save(usuario);
 
-        SimpleMailMessage message = new SimpleMailMessage();
-        message.setFrom("rocioaramay@gmail.com");
-        message.setTo(usuario.getEmail());
-        message.setSubject("Código de recuperación - Suby");
-        message.setText("""
-    Tu código de recuperación es:
-
-    %s
-
-    El código vence en 15 minutos.
-    """.formatted(code));
-
         try {
-            mailSender.send(message);
+            resendEmailService.send(
+                    usuario.getEmail(),
+                    "Código de recuperación - Suby",
+                    """
+                            <p>Tu código de recuperación es:</p>
+                            <p><strong>%s</strong></p>
+                            <p>El código vence en 15 minutos.</p>
+                            """.formatted(code)
+            );
         } catch (Exception e) {
             throw new RuntimeException(
                     "Ocurrió un problema al intentar enviar el correo. Por favor, inténtalo más tarde."
@@ -514,22 +508,16 @@ public class AuthService {
 
             onboardingUsuarioRepository.save(onboarding);
 
-                SimpleMailMessage message = new SimpleMailMessage();
-                message.setFrom("rocioaramay@gmail.com");
-                message.setTo(email);
-                message.setSubject("Solicitud recibida - Suby");
-                message.setText("""
-Hola %s,
-
-Recibimos correctamente tu solicitud de registro en Suby.
-
-Nuestro equipo revisará la documentación enviada dentro de las próximas 24-72 hs.
-
-Saludos,
-Equipo Suby
-""".formatted(request.getName()));
-
-                mailSender.send(message);
+                resendEmailService.send(
+                        email,
+                        "Solicitud recibida - Suby",
+                        """
+                                <p>Hola %s,</p>
+                                <p>Recibimos correctamente tu solicitud de registro en Suby.</p>
+                                <p>Nuestro equipo revisará la documentación enviada dentro de las próximas 24-72 hs.</p>
+                                <p>Saludos,<br/>Equipo Suby</p>
+                                """.formatted(request.getName())
+                );
         } catch (IOException e) {
             throw new RuntimeException("Bad request", e);
         }
@@ -599,32 +587,24 @@ Equipo Suby
                     continue;
                 }
 
-                SimpleMailMessage message = new SimpleMailMessage();
-                message.setFrom("rocioaramay@gmail.com");
-                message.setTo(onboarding.getEmail());
-                message.setSubject("Cuenta aprobada - Suby");
-                message.setText("""
-Hola %s,
-
-Tu solicitud de registro fue aprobada correctamente.
-
-Ya podés ingresar a Suby utilizando las siguientes credenciales temporales:
-
-Email: %s
-Contraseña temporal: %s
-
-Por seguridad, al iniciar sesión por primera vez se te solicitará cambiar la contraseña.
-
-Saludos,
-Equipo Suby
-""".formatted(
-                    onboarding.getNombre(),
-                    onboarding.getEmail(),
-                    tempPassword
-                ));
-
                 try {
-                    mailSender.send(message);
+                    resendEmailService.send(
+                            onboarding.getEmail(),
+                            "Cuenta aprobada - Suby",
+                            """
+                                    <p>Hola %s,</p>
+                                    <p>Tu solicitud de registro fue aprobada correctamente.</p>
+                                    <p>Ya podés ingresar a Suby utilizando las siguientes credenciales temporales:</p>
+                                    <p><strong>Email:</strong> %s<br/>
+                                    <strong>Contraseña temporal:</strong> %s</p>
+                                    <p>Por seguridad, al iniciar sesión por primera vez se te solicitará cambiar la contraseña.</p>
+                                    <p>Saludos,<br/>Equipo Suby</p>
+                                    """.formatted(
+                                    onboarding.getNombre(),
+                                    onboarding.getEmail(),
+                                    tempPassword
+                            )
+                    );
                 } catch (Exception e) {
                     // Log and continue; onboarding already marked processed
                     log.warn("Failed to send approval email to {}", onboarding.getEmail(), e);
@@ -787,66 +767,46 @@ Equipo Suby
     }
 
     private void sendApprovalEmail(OnboardingUsuario onboarding, String tempPassword, String category) {
-        SimpleMailMessage message = new SimpleMailMessage();
-        message.setFrom("rocioaramay@gmail.com");
-        message.setTo(onboarding.getEmail());
-        message.setSubject("Cuenta aprobada - Suby");
-        message.setText(tempPassword == null
-                ? """
-Hola %s,
-
-Tu solicitud fue aprobada correctamente.
-
-El equipo de Suby te asignó la categoría %s.
-
-Saludos,
-Equipo Suby
-""".formatted(onboarding.getNombre(), normalizeClientCategory(category))
-                : """
-Hola %s,
-
-Tu solicitud fue aprobada correctamente.
-
-El equipo de Suby te asignó la categoría %s.
-
-Ya podés ingresar a Suby utilizando las siguientes credenciales temporales:
-
-Email: %s
-Contraseña temporal: %s
-
-Por seguridad, al iniciar sesión por primera vez se te solicitará cambiar la contraseña.
-
-Saludos,
-Equipo Suby
-""".formatted(onboarding.getNombre(), normalizeClientCategory(category), onboarding.getEmail(), tempPassword));
-
         try {
-            mailSender.send(message);
+            resendEmailService.send(
+                    onboarding.getEmail(),
+                    "Cuenta aprobada - Suby",
+                    tempPassword == null
+                            ? """
+                                    <p>Hola %s,</p>
+                                    <p>Tu solicitud fue aprobada correctamente.</p>
+                                    <p>El equipo de Suby te asignó la categoría <strong>%s</strong>.</p>
+                                    <p>Saludos,<br/>Equipo Suby</p>
+                                    """.formatted(onboarding.getNombre(), normalizeClientCategory(category))
+                            : """
+                                    <p>Hola %s,</p>
+                                    <p>Tu solicitud fue aprobada correctamente.</p>
+                                    <p>El equipo de Suby te asignó la categoría <strong>%s</strong>.</p>
+                                    <p>Ya podés ingresar a Suby utilizando las siguientes credenciales temporales:</p>
+                                    <p><strong>Email:</strong> %s<br/>
+                                    <strong>Contraseña temporal:</strong> %s</p>
+                                    <p>Por seguridad, al iniciar sesión por primera vez se te solicitará cambiar la contraseña.</p>
+                                    <p>Saludos,<br/>Equipo Suby</p>
+                                    """.formatted(onboarding.getNombre(), normalizeClientCategory(category), onboarding.getEmail(), tempPassword)
+            );
         } catch (Exception e) {
             log.warn("Failed to send admin approval email to {}", onboarding.getEmail(), e);
         }
     }
 
     private void sendRejectionEmail(OnboardingUsuario onboarding, String reason) {
-        SimpleMailMessage message = new SimpleMailMessage();
-        message.setFrom("rocioaramay@gmail.com");
-        message.setTo(onboarding.getEmail());
-        message.setSubject("Solicitud rechazada - Suby");
-        message.setText("""
-Hola %s,
-
-Tu solicitud no pudo ser aprobada.
-
-Motivo: %s
-
-Si querés, podés volver a enviar la documentación con la información corregida.
-
-Saludos,
-Equipo Suby
-""".formatted(onboarding.getNombre(), reason));
-
         try {
-            mailSender.send(message);
+            resendEmailService.send(
+                    onboarding.getEmail(),
+                    "Solicitud rechazada - Suby",
+                    """
+                            <p>Hola %s,</p>
+                            <p>Tu solicitud no pudo ser aprobada.</p>
+                            <p><strong>Motivo:</strong> %s</p>
+                            <p>Si querés, podés volver a enviar la documentación con la información corregida.</p>
+                            <p>Saludos,<br/>Equipo Suby</p>
+                            """.formatted(onboarding.getNombre(), reason)
+            );
         } catch (Exception e) {
             log.warn("Failed to send rejection email to {}", onboarding.getEmail(), e);
         }

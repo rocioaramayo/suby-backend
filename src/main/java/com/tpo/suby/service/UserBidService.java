@@ -20,13 +20,10 @@ import com.tpo.suby.exception.WonItemPaymentNotFoundException;
 import com.tpo.suby.repository.UsuarioAppRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.support.GeneratedKeyHolder;
 import org.springframework.jdbc.support.KeyHolder;
-import org.springframework.mail.SimpleMailMessage;
-import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
@@ -55,10 +52,7 @@ public class UserBidService {
     private final UsuarioAppRepository usuarioAppRepository;
     private final PrivateMessageService privateMessageService;
     private final UserCategoryService userCategoryService;
-    private final JavaMailSender mailSender;
-
-    @Value("${spring.mail.username}")
-    private String mailFrom;
+    private final ResendEmailService resendEmailService;
 
     public UserBidHistoryResponse getBidHistory(Integer userId) {
         validateOwner(userId);
@@ -691,43 +685,34 @@ public class UserBidService {
                                 : " a " + shippingAddress
                 );
 
-        SimpleMailMessage message = new SimpleMailMessage();
-        message.setFrom(mailFrom);
-        message.setTo(recipientEmail);
-        message.setSubject("Pago confirmado - " + defaultText(wonBid.lotCode()));
-        message.setText("""
-                Hola,
-
-                Confirmamos el pago de tu compra en Suby.
-
-                Lote: %s
-                Articulo: %s
-                Subasta: %s
-                Puja ganadora: %s
-                Comision: %s
-                Envio: %s
-                Total abonado: %s
-
-                Modalidad de entrega:
-                %s
-
-                Podes revisar el detalle completo desde la app.
-
-                Saludos,
-                Equipo Suby
-                """.formatted(
-                defaultText(wonBid.lotCode()),
-                defaultText(wonBid.title()),
-                defaultText(wonBid.auctionName()),
-                formatMoney(wonBid.winningBid(), wonBid.auctionCurrency()),
-                formatMoney(commissionAmount, wonBid.auctionCurrency()),
-                retiroPresencial ? "Sin cargo" : formatMoney(shippingAmount, wonBid.auctionCurrency()),
-                formatMoney(totalToPay, wonBid.auctionCurrency()),
-                deliverySummary
-        ));
-
         try {
-            mailSender.send(message);
+            resendEmailService.send(
+                    recipientEmail,
+                    "Pago confirmado - " + defaultText(wonBid.lotCode()),
+                    """
+                            <p>Hola,</p>
+                            <p>Confirmamos el pago de tu compra en Suby.</p>
+                            <p><strong>Lote:</strong> %s<br/>
+                            <strong>Articulo:</strong> %s<br/>
+                            <strong>Subasta:</strong> %s<br/>
+                            <strong>Puja ganadora:</strong> %s<br/>
+                            <strong>Comision:</strong> %s<br/>
+                            <strong>Envio:</strong> %s<br/>
+                            <strong>Total abonado:</strong> %s</p>
+                            <p><strong>Modalidad de entrega:</strong><br/>%s</p>
+                            <p>Podes revisar el detalle completo desde la app.</p>
+                            <p>Saludos,<br/>Equipo Suby</p>
+                            """.formatted(
+                            defaultText(wonBid.lotCode()),
+                            defaultText(wonBid.title()),
+                            defaultText(wonBid.auctionName()),
+                            formatMoney(wonBid.winningBid(), wonBid.auctionCurrency()),
+                            formatMoney(commissionAmount, wonBid.auctionCurrency()),
+                            retiroPresencial ? "Sin cargo" : formatMoney(shippingAmount, wonBid.auctionCurrency()),
+                            formatMoney(totalToPay, wonBid.auctionCurrency()),
+                            deliverySummary
+                    )
+            );
         } catch (Exception ex) {
             log.warn("Failed to send payment confirmation email to {}", recipientEmail, ex);
         }
