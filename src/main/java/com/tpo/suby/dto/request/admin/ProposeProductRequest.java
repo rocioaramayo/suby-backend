@@ -16,5 +16,7 @@ public class ProposeProductRequest {
     @JsonProperty("commission_pct")
     private BigDecimal commissionPct;
 
+    private String currency;
+
     private String note;
 }

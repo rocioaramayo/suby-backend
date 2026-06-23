@@ -1,6 +1,7 @@
 package com.tpo.suby.service;
 
 import java.math.BigDecimal;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 import org.springframework.dao.EmptyResultDataAccessException;
@@ -41,19 +42,33 @@ public class ProductProposalService {
                 WHERE identificador = ?
                 """, context.requestId());
 
+        if (context.proposalId() != null) {
+            jdbcTemplate.update("""
+                    UPDATE propuestasSubasta
+                    SET estado = 'aceptada',
+                        fechaRespuesta = GETDATE(),
+                        respuestaCliente = 'acepta'
+                    WHERE identificador = ?
+                    """, context.proposalId());
+        }
+
+        Map<String, String> messageData = new LinkedHashMap<>();
+        messageData.put("product_id", String.valueOf(context.productId()));
+        messageData.put("product_name", context.productName());
+        messageData.put("base_price", context.basePrice().toPlainString());
+        messageData.put("proposal_message_id", String.valueOf(notificationId));
+        messageData.put("cta_label", "Ver mis bienes");
+        messageData.put("cta_target", "/profile");
+        if (context.currency() != null) {
+            messageData.put("currency", context.currency());
+        }
+
         privateMessageService.createPrivateMessage(
                 userId,
                 "aviso_general",
                 "Aceptaste la propuesta",
                 "Aceptaste el valor base propuesto. Ahora el equipo puede incluir tu lote en una subasta.",
-                Map.of(
-                        "product_id", String.valueOf(context.productId()),
-                        "product_name", context.productName(),
-                        "base_price", context.basePrice().toPlainString(),
-                        "proposal_message_id", String.valueOf(notificationId),
-                        "cta_label", "Ver mis bienes",
-                        "cta_target", "/profile"
-                )
+                messageData
         );
 
         return "Aceptaste la propuesta correctamente.";
@@ -73,6 +88,16 @@ public class ProductProposalService {
                 SET estado = 'propuesta_rechazada'
                 WHERE identificador = ?
                 """, context.requestId());
+
+        if (context.proposalId() != null) {
+            jdbcTemplate.update("""
+                    UPDATE propuestasSubasta
+                    SET estado = 'rechazada_cliente',
+                        fechaRespuesta = GETDATE(),
+                        respuestaCliente = 'rechaza'
+                    WHERE identificador = ?
+                    """, context.proposalId());
+        }
 
         privateMessageService.createPrivateMessage(
                 userId,
@@ -102,12 +127,15 @@ public class ProductProposalService {
                         TRY_CAST(pid.valor AS INT) AS product_id,
                         COALESCE(pn.valor, p.descripcionCatalogo, p.descripcionCompleta) AS product_name,
                         TRY_CAST(bp.valor AS DECIMAL(18, 2)) AS base_price,
-                        si.identificador AS request_id
+                        mdc.valor AS currency,
+                        si.identificador AS request_id,
+                        proposal.identificador AS proposal_id
                     FROM mensajes_privados mp
                     JOIN mensajes_datos pid ON pid.mensaje = mp.identificador AND pid.clave = 'product_id'
                     LEFT JOIN mensajes_datos fk ON fk.mensaje = mp.identificador AND fk.clave = 'flow_kind'
                     LEFT JOIN mensajes_datos pn ON pn.mensaje = mp.identificador AND pn.clave = 'product_name'
                     LEFT JOIN mensajes_datos bp ON bp.mensaje = mp.identificador AND bp.clave = 'base_price'
+                    LEFT JOIN mensajes_datos mdc ON mdc.mensaje = mp.identificador AND mdc.clave = 'currency'
                     LEFT JOIN productos p ON p.identificador = TRY_CAST(pid.valor AS INT)
                     LEFT JOIN solicitudesIngreso si
                         ON si.duenio = mp.destinatario
@@ -116,6 +144,12 @@ public class ProductProposalService {
                             p.descripcionCatalogo,
                             p.descripcionCompleta
                         )
+                    OUTER APPLY (
+                        SELECT TOP 1 ps.identificador
+                        FROM propuestasSubasta ps
+                        WHERE ps.solicitud = si.identificador
+                        ORDER BY ps.fechaPropuesta DESC, ps.identificador DESC
+                    ) proposal
                     WHERE mp.identificador = ?
                       AND mp.destinatario = ?
                       AND (mp.tipo = 'propuesta_precio' OR (mp.tipo = 'aviso_general' AND fk.valor = 'proposal_price'))
@@ -128,7 +162,9 @@ public class ProductProposalService {
                     rs.getInt("product_id"),
                     rs.getString("product_name"),
                     rs.getBigDecimal("base_price"),
-                    rs.getInt("request_id")
+                    rs.getString("currency"),
+                    rs.getInt("request_id"),
+                    rs.getObject("proposal_id") == null ? null : rs.getInt("proposal_id")
             ), messageId, userId);
         } catch (EmptyResultDataAccessException ex) {
             throw new NotFoundException("Propuesta no encontrada.");
@@ -162,7 +198,9 @@ public class ProductProposalService {
             Integer productId,
             String productName,
             BigDecimal basePrice,
-            Integer requestId
+            String currency,
+            Integer requestId,
+            Integer proposalId
     ) {
         private boolean isProposal() {
             return "propuesta_precio".equalsIgnoreCase(messageType)

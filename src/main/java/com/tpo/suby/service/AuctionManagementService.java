@@ -79,7 +79,9 @@ public class AuctionManagementService {
                     proposal.proposed_base_price AS proposed_base_price,
                     thumbnail.photo_id AS thumbnail_photo_id,
                     last_request.fechaSolicitud AS request_date,
-                    s.identificador AS auction_id
+                    s.identificador AS auction_id,
+                    last_request.monedaPreferida AS preferred_currency,
+                    last_request.aceptaUsd AS accepts_usd
                 FROM productos p
                 JOIN duenios d ON d.identificador = p.duenio
                 JOIN personas owner ON owner.identificador = d.identificador
@@ -104,7 +106,9 @@ public class AuctionManagementService {
                     SELECT TOP 1
                         si.identificador,
                         si.estado,
-                        si.fechaSolicitud
+                        si.fechaSolicitud,
+                        si.monedaPreferida,
+                        si.aceptaUsd
                     FROM solicitudesIngreso si
                     WHERE si.duenio = p.duenio
                       AND si.descripcionBien = COALESCE(pd.titulo, NULLIF(p.descripcionCatalogo, 'No Posee'), p.descripcionCompleta)
@@ -151,6 +155,8 @@ public class AuctionManagementService {
                     .requestDate(toLocalDate(rs.getDate("request_date")))
                     .auctionId(auctionId)
                     .canCreateAuction(canCreateAuction)
+                    .preferredCurrency(rs.getString("preferred_currency"))
+                    .acceptsUsd(rs.getString("accepts_usd"))
                     .build();
         });
 
@@ -273,6 +279,9 @@ public class AuctionManagementService {
         String note = request != null && !isBlank(request.getNote())
                 ? request.getNote().trim()
                 : "Valor base propuesto por el panel de Suby.";
+        String currency = request != null && !isBlank(request.getCurrency())
+                ? request.getCurrency().trim().toUpperCase()
+                : "ARS";
 
         jdbcTemplate.update("""
                 UPDATE solicitudesIngreso
@@ -288,6 +297,7 @@ public class AuctionManagementService {
         proposalData.put("product_name", context.title());
         proposalData.put("reviewed_by", employeeName(employeeId));
         proposalData.put("summary", note);
+        proposalData.put("currency", currency);
         proposalData.put("base_price", basePrice.toPlainString());
         proposalData.put("commission_pct", commissionPct.toPlainString());
         proposalData.put("net_amount", basePrice.subtract(basePrice.multiply(commissionPct).divide(new BigDecimal("100"))).toPlainString());

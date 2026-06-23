@@ -53,4 +53,10 @@ public class AdminProductReviewItemResponse {
 
     @JsonProperty("can_create_auction")
     private Boolean canCreateAuction;
+
+    @JsonProperty("preferred_currency")
+    private String preferredCurrency;
+
+    @JsonProperty("accepts_usd")
+    private String acceptsUsd;
 }

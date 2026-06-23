@@ -161,6 +161,8 @@ public class UserProductService {
             String fullDescription,
             Boolean ownershipDeclaration,
             Integer receivingAccountId,
+            String preferredCurrency,
+            Boolean acceptsUsd,
             Boolean isArt,
             String artist,
             LocalDate creationDate,
@@ -190,6 +192,9 @@ public class UserProductService {
 
         BankAccountData receivingAccount = loadReceivingAccount(authenticatedUserId, receivingAccountId);
         ensureDestinationAccount(authenticatedUserId, receivingAccount);
+        String normalizedPreferredCurrency = normalizeCurrency(preferredCurrency, null);
+        String acceptsUsdFlag = toYesNo(Boolean.TRUE.equals(acceptsUsd)
+                || "USD".equalsIgnoreCase(normalizedPreferredCurrency));
 
         Integer reviewerId = firstEmployeeId();
         Integer productId = insertProduct(authenticatedUserId, reviewerId, name, fullDescription);
@@ -223,12 +228,12 @@ public class UserProductService {
 
         jdbcTemplate.update("""
                 INSERT INTO solicitudesIngreso (
-                    duenio, estado, fechaSolicitud, descripcionBien,
+                    duenio, monedaPreferida, aceptaUsd, estado, fechaSolicitud, descripcionBien,
                     declaraPropiedad, declaraOrigenLicito, direccionEnvio,
                     motivoRechazo, revisadoPor, gastosDevolucion
                 )
-                VALUES (?, 'pendiente', GETDATE(), ?, 'si', 'si', NULL, NULL, NULL, NULL)
-                """, authenticatedUserId, name);
+                VALUES (?, ?, ?, 'pendiente', GETDATE(), ?, 'si', 'si', NULL, NULL, NULL, NULL)
+                """, authenticatedUserId, normalizedPreferredCurrency, acceptsUsdFlag, name);
 
         return "Tu artículo fue enviado para revisión. Quedó pendiente y sin póliza hasta que administración lo evalúe.";
     }
@@ -345,6 +350,7 @@ public class UserProductService {
             return jdbcTemplate.queryForObject("""
                     SELECT
                         mdp.identificador AS payment_method_id,
+                        mdp.moneda AS currency,
                         cb.banco AS bank_name,
                         cb.numeroCuenta AS account_number,
                         cb.pais AS country_id,
@@ -358,6 +364,7 @@ public class UserProductService {
                       AND mdp.tipo = 'cuenta_bancaria'
                     """, (rs, rowNum) -> new BankAccountData(
                     rs.getInt("payment_method_id"),
+                    rs.getString("currency"),
                     rs.getString("bank_name"),
                     rs.getString("account_number"),
                     rs.getInt("country_id"),
@@ -384,11 +391,11 @@ public class UserProductService {
 
         jdbcTemplate.update("""
                 INSERT INTO cuentasDestinoVenta (
-                    duenio, banco, numeroCuenta, pais,
+                    duenio, moneda, banco, numeroCuenta, pais,
                     cbu, swift, iban, estado
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, 'verificada')
-                """, userId, account.bankName(), account.accountNumber(), account.countryId(),
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'verificada')
+                """, userId, account.currency(), account.bankName(), account.accountNumber(), account.countryId(),
                 account.cbu(), account.swift(), account.iban());
     }
 
@@ -495,6 +502,22 @@ public class UserProductService {
         return value == null || value.isBlank();
     }
 
+    private String normalizeCurrency(String value, String fallback) {
+        if (value == null || value.isBlank()) {
+            return fallback;
+        }
+
+        String normalized = value.trim().toUpperCase(Locale.ROOT);
+        return switch (normalized) {
+            case "ARS", "USD" -> normalized;
+            default -> throw new OwnerProductValidationException("Moneda inválida. Debe ser ARS o USD.");
+        };
+    }
+
+    private String toYesNo(boolean value) {
+        return value ? "si" : "no";
+    }
+
     private String nullableTrim(String value) {
         if (value == null) {
             return null;
@@ -575,6 +598,7 @@ public class UserProductService {
 
     private record BankAccountData(
             Integer paymentMethodId,
+            String currency,
             String bankName,
             String accountNumber,
             Integer countryId,
