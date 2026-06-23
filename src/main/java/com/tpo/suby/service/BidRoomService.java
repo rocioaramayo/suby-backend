@@ -196,9 +196,26 @@ public class BidRoomService {
                 .amount(amount)
                 .itemId(itemId)
                 .winner("no")
-                .newMinimum(amount.add(percent(lot.basePrice(), "0.01")))
-                .newMaximum(hasNoMaximum(lot.auctionCategory()) ? null : amount.add(percent(lot.basePrice(), "0.20")))
+                .newMinimum(minimumAllowedBid(amount, lot.basePrice(), lot.auctionCategory()))
+                .newMaximum(maximumAllowedBid(amount, lot.basePrice(), lot.auctionCategory()))
                 .build();
+    }
+
+    @Transactional
+    public void leaveAuctionRoom(Integer auctionId) {
+        if (auctionId == null || auctionId <= 0) {
+            throw new NotFoundException("Subasta no encontrada.");
+        }
+
+        UsuarioApp user = authenticatedUser();
+        ActiveSessionInfo activeSession = activeSession(user.getIdentificador());
+        if (activeSession == null || activeSession.auctionId() == null) {
+            return;
+        }
+
+        if (activeSession.auctionId().equals(auctionId)) {
+            clearActiveSession(user.getIdentificador());
+        }
     }
 
     public LiveBidStatusResponse liveBidStatus(Integer auctionId, Integer itemId) {
@@ -765,6 +782,7 @@ public class BidRoomService {
 
     private BigDecimal minimumAllowedBid(BigDecimal currentOffer, BigDecimal basePrice, String auctionCategory) {
         if (hasNoMaximum(auctionCategory)) {
+            // En categorias oro/platino no aplican los saltos porcentuales, solo debe superar la oferta actual.
             return currentOffer.add(BigDecimal.ONE).setScale(2, RoundingMode.HALF_UP);
         }
 

@@ -119,6 +119,17 @@ public class AuctionController {
         );
     }
 
+    @PostMapping("/{auctionId}/leave")
+    public ResponseEntity<?> leaveAuctionRoom(@PathVariable Integer auctionId) {
+        bidRoomService.leaveAuctionRoom(auctionId);
+        return ResponseEntity.ok(
+                ApiResponse.<Map<String, Object>>builder()
+                        .status("success")
+                        .message(Map.of("left", true))
+                        .build()
+        );
+    }
+
     @PostMapping("/{auctionId}/items/{itemId}/bids")
     public ResponseEntity<?> placeBid(
             @PathVariable Integer auctionId,
