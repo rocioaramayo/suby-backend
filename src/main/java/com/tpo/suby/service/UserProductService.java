@@ -195,6 +195,7 @@ public class UserProductService {
         String normalizedPreferredCurrency = normalizeCurrency(preferredCurrency, null);
         String acceptsUsdFlag = toYesNo(Boolean.TRUE.equals(acceptsUsd)
                 || "USD".equalsIgnoreCase(normalizedPreferredCurrency));
+        validateReceivingAccountCurrency(normalizedPreferredCurrency, receivingAccount);
 
         Integer reviewerId = firstEmployeeId();
         Integer productId = insertProduct(authenticatedUserId, reviewerId, name, fullDescription);
@@ -397,6 +398,19 @@ public class UserProductService {
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'verificada')
                 """, userId, account.currency(), account.bankName(), account.accountNumber(), account.countryId(),
                 account.cbu(), account.swift(), account.iban());
+    }
+
+    private void validateReceivingAccountCurrency(String preferredCurrency, BankAccountData account) {
+        if (preferredCurrency == null || preferredCurrency.isBlank()) {
+            return;
+        }
+
+        String accountCurrency = normalizeCurrency(account.currency(), "ARS");
+        if (!preferredCurrency.equalsIgnoreCase(accountCurrency)) {
+            throw new OwnerProductValidationException(
+                    "La cuenta elegida debe estar en " + preferredCurrency + " para enviar una solicitud con esa moneda."
+            );
+        }
     }
 
     private void ensureOwnerProfileExists(Integer userId) {
