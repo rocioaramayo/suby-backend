@@ -205,7 +205,7 @@ public class AuctionService {
                     SELECT
                         ic.identificador AS item_id,
                         CONCAT('LOT-', RIGHT(CONCAT('000', ic.identificador), 3)) AS lot_code,
-                        p.descripcionCompleta AS title,
+                        pd.titulo AS title,
                         CAST(NULL AS VARCHAR(250)) AS attribution,
                         owner.nombre AS owner,
                         ic.precioBase AS base_price,
