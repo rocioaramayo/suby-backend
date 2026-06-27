@@ -101,16 +101,31 @@ public class UserProductService {
                     COALESCE(p.disponible, 'no') AS available,
                     COALESCE(pe.nroPoliza, p.seguro) AS insurance_policy,
                     %s AS insurance_phone,
-                    dep.identificador AS deposit_id,
-                    dep.nombre AS deposit_name,
-                    dep.direccion AS deposit_address,
-                    COALESCE(ic.precioBase, seg.importe, 0) AS estimated_value,
-                    p.descripcionCatalogo AS catalog_description
+                dep.identificador AS deposit_id,
+                dep.nombre AS deposit_name,
+                dep.direccion AS deposit_address,
+                COALESCE(ic.precioBase, proposal.proposed_base_price, seg.importe, 0) AS estimated_value,
+                p.descripcionCatalogo AS catalog_description
                 FROM productos p
                 LEFT JOIN productos_ext pe ON pe.identificador = p.identificador
                 LEFT JOIN productos_detalle pd ON pd.identificador = p.identificador
                 LEFT JOIN depositos dep ON dep.identificador = pe.deposito
                 LEFT JOIN seguros seg ON seg.nroPoliza = COALESCE(pe.nroPoliza, p.seguro)
+                OUTER APPLY (
+                    SELECT TOP 1
+                        TRY_CAST(bp.valor AS DECIMAL(18, 2)) AS proposed_base_price
+                    FROM mensajes_privados mp
+                    JOIN mensajes_datos pid ON pid.mensaje = mp.identificador AND pid.clave = 'product_id'
+                    LEFT JOIN mensajes_datos fk ON fk.mensaje = mp.identificador AND fk.clave = 'flow_kind'
+                    LEFT JOIN mensajes_datos bp ON bp.mensaje = mp.identificador AND bp.clave = 'base_price'
+                    WHERE mp.destinatario = p.duenio
+                      AND (
+                            mp.tipo = 'propuesta_precio'
+                            OR (mp.tipo = 'aviso_general' AND fk.valor = 'proposal_price')
+                      )
+                      AND pid.valor = CAST(p.identificador AS VARCHAR(20))
+                    ORDER BY mp.enviadoEn DESC, mp.identificador DESC
+                ) proposal
                 %s
                 LEFT JOIN itemsCatalogo ic ON ic.producto = p.identificador
                 LEFT JOIN catalogos c ON c.identificador = ic.catalogo

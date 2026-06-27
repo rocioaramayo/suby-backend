@@ -73,7 +73,7 @@ public class AuctionManagementService {
                         ELSE COALESCE(last_request.estado, 'pendiente')
                     END AS inspection_status,
                     COALESCE(photo_count.total_photos, 0) AS photo_count,
-                    COALESCE(ic.precioBase, seg.importe, 0) AS estimated_value,
+                    COALESCE(ic.precioBase, proposal.proposed_base_price, seg.importe, 0) AS estimated_value,
                     ic.precioBase AS published_base_price,
                     proposal.proposal_message_id AS proposal_message_id,
                     proposal.proposed_base_price AS proposed_base_price,
@@ -633,7 +633,7 @@ public class AuctionManagementService {
                         COALESCE(last_request.identificador, NULL) AS request_id,
                         COALESCE(last_request.estado, 'pendiente') AS request_status,
                         COALESCE(photo_count.total_photos, 0) AS photo_count,
-                        COALESCE(ic.precioBase, seg.importe, 0) AS estimated_value,
+                        COALESCE(ic.precioBase, proposal.proposed_base_price, seg.importe, 0) AS estimated_value,
                         ic.identificador AS auction_item_id,
                         ic.precioBase AS published_base_price,
                         s.identificador AS auction_id,
@@ -659,6 +659,21 @@ public class AuctionManagementService {
                           AND si.descripcionBien = COALESCE(pd.titulo, NULLIF(p.descripcionCatalogo, 'No Posee'), p.descripcionCompleta)
                         ORDER BY si.fechaSolicitud DESC, si.identificador DESC
                     ) last_request
+                    OUTER APPLY (
+                        SELECT TOP 1
+                            TRY_CAST(bp.valor AS DECIMAL(18, 2)) AS proposed_base_price
+                        FROM mensajes_privados mp
+                        JOIN mensajes_datos pid ON pid.mensaje = mp.identificador AND pid.clave = 'product_id'
+                        LEFT JOIN mensajes_datos fk ON fk.mensaje = mp.identificador AND fk.clave = 'flow_kind'
+                        LEFT JOIN mensajes_datos bp ON bp.mensaje = mp.identificador AND bp.clave = 'base_price'
+                        WHERE mp.destinatario = p.duenio
+                          AND (
+                                mp.tipo = 'propuesta_precio'
+                                OR (mp.tipo = 'aviso_general' AND fk.valor = 'proposal_price')
+                          )
+                          AND pid.valor = CAST(p.identificador AS VARCHAR(20))
+                        ORDER BY mp.enviadoEn DESC, mp.identificador DESC
+                    ) proposal
                     WHERE p.identificador = ?
                     """, (rs, rowNum) -> new ProductContext(
                     rs.getInt("product_id"),
