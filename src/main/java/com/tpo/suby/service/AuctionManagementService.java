@@ -33,8 +33,9 @@ import java.sql.Date;
 import java.sql.PreparedStatement;
 import java.sql.Statement;
 import java.time.LocalDate;
-import java.time.LocalTime;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -48,6 +49,7 @@ import java.util.StringJoiner;
 public class AuctionManagementService {
 
     private static final String ADMIN_EMAIL = "admin@suby.com";
+    private static final ZoneId AUCTION_ZONE = ZoneId.of("America/Argentina/Buenos_Aires");
 
     private final JdbcTemplate jdbcTemplate;
     private final UsuarioAppRepository usuarioAppRepository;
@@ -736,7 +738,8 @@ public class AuctionManagementService {
         }
 
         LocalDateTime scheduledAt = LocalDateTime.of(auctionDate, auctionHour);
-        if (!scheduledAt.isAfter(LocalDateTime.now())) {
+        LocalDateTime now = LocalDateTime.now(AUCTION_ZONE).minusMinutes(1);
+        if (!scheduledAt.isAfter(now)) {
             throw new OwnerProductValidationException("La fecha y hora de la subasta deben ser posteriores al momento actual.");
         }
     }
