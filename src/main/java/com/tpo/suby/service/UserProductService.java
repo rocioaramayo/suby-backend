@@ -5,6 +5,7 @@ import java.sql.Date;
 import java.sql.PreparedStatement;
 import java.sql.Statement;
 import java.time.LocalDate;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -253,20 +254,31 @@ public class UserProductService {
                 VALUES (?, ?, ?, 'pendiente', GETDATE(), ?, 'si', 'si', NULL, NULL, NULL, NULL)
                 """, authenticatedUserId, normalizedPreferredCurrency, acceptsUsdFlag, name);
 
+        Map<String, String> submissionData = new LinkedHashMap<>();
+        submissionData.put("product_id", String.valueOf(productId));
+        submissionData.put("product_code", "PROD-%d".formatted(productId));
+        submissionData.put("product_name", name);
+        String firstPhotoUrl = firstOwnerProductPhotoUrl(authenticatedUserId, productId);
+        if (firstPhotoUrl != null) {
+            submissionData.put("image_url", firstPhotoUrl);
+        }
+        submissionData.put("summary", "Tu solicitud fue recibida. Revisá los datos enviados y aguardá la evaluación del equipo.");
+        submissionData.put("inspection_summary", "Tu artículo necesita ser evaluado. A continuación encontrarás la dirección del depósito comercial para incluirlo en nuestra próxima inspección.");
+        submissionData.put("hours", "8:00 A 23:00 Hs");
+        submissionData.put("days", "Lunes A Jueves");
+        submissionData.put("location", "Salón San Telmo, CABA");
+        submissionData.put("address", "Lima 777");
+        submissionData.put("clarification", "Timbre 3");
+        submissionData.put("cta_label", "Ver mis bienes");
+        submissionData.put("cta_target", "/profile");
+        submissionData.put("flow_kind", "submission_received");
+
         privateMessageService.createPrivateMessage(
                 authenticatedUserId,
                 "aviso_general",
                 "Recibimos tu solicitud — detalles de envío",
                 "Tu artículo fue enviado correctamente y quedó pendiente de revisión.",
-                Map.of(
-                        "product_id", String.valueOf(productId),
-                        "product_code", "PROD-%d".formatted(productId),
-                        "product_name", name,
-                        "summary", "Tu solicitud fue recibida. Revisá los datos enviados y aguardá la evaluación del equipo.",
-                        "cta_label", "Ver mis bienes",
-                        "cta_target", "/profile",
-                        "flow_kind", "submission_received"
-                )
+                submissionData
         );
 
         return "Tu artículo fue enviado para revisión. Quedó pendiente y sin póliza hasta que administración lo evalúe.";
