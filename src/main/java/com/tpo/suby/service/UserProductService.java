@@ -7,6 +7,7 @@ import java.sql.Statement;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 
 import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.jdbc.BadSqlGrammarException;
@@ -36,6 +37,7 @@ public class UserProductService {
 
     private final JdbcTemplate jdbcTemplate;
     private final UsuarioAppRepository usuarioAppRepository;
+    private final PrivateMessageService privateMessageService;
 
     public OwnerProductsResponse listOwnerProducts(Integer userId) {
         Integer authenticatedUserId = resolveAuthenticatedOwnerId(userId);
@@ -250,6 +252,22 @@ public class UserProductService {
                 )
                 VALUES (?, ?, ?, 'pendiente', GETDATE(), ?, 'si', 'si', NULL, NULL, NULL, NULL)
                 """, authenticatedUserId, normalizedPreferredCurrency, acceptsUsdFlag, name);
+
+        privateMessageService.createPrivateMessage(
+                authenticatedUserId,
+                "aviso_general",
+                "Recibimos tu solicitud — detalles de envío",
+                "Tu artículo fue enviado correctamente y quedó pendiente de revisión.",
+                Map.of(
+                        "product_id", String.valueOf(productId),
+                        "product_code", "PROD-%d".formatted(productId),
+                        "product_name", name,
+                        "summary", "Tu solicitud fue recibida. Revisá los datos enviados y aguardá la evaluación del equipo.",
+                        "cta_label", "Ver mis bienes",
+                        "cta_target", "/profile",
+                        "flow_kind", "submission_received"
+                )
+        );
 
         return "Tu artículo fue enviado para revisión. Quedó pendiente y sin póliza hasta que administración lo evalúe.";
     }
