@@ -738,7 +738,7 @@ public class AuctionManagementService {
         }
 
         LocalDateTime scheduledAt = LocalDateTime.of(auctionDate, auctionHour);
-        LocalDateTime now = LocalDateTime.now(AUCTION_ZONE).minusMinutes(1);
+        LocalDateTime now = LocalDateTime.now(AUCTION_ZONE);
         if (!scheduledAt.isAfter(now)) {
             throw new OwnerProductValidationException("La fecha y hora de la subasta deben ser posteriores al momento actual.");
         }

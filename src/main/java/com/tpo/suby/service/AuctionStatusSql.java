@@ -3,6 +3,8 @@ package com.tpo.suby.service;
 final class AuctionStatusSql {
 
     private static final String ACTIVE_STATE_SET = "('abierta', 'activa', 'en_vivo', 'live', 'open')";
+    private static final String ARGENTINA_NOW =
+            "CAST(SYSUTCDATETIME() AT TIME ZONE 'UTC' AT TIME ZONE 'Argentina Standard Time' AS DATETIME2)";
 
     private AuctionStatusSql() {
     }
@@ -16,14 +18,14 @@ final class AuctionStatusSql {
         return """
                 CASE
                     WHEN %s
-                         AND CAST(CONCAT(CONVERT(varchar(10), %s, 120), ' ', CONVERT(varchar(8), COALESCE(s.hora, '00:00:00'), 108)) AS DATETIME) <= GETDATE()
+                         AND CAST(CONCAT(CONVERT(varchar(10), %s, 120), ' ', CONVERT(varchar(8), COALESCE(s.hora, '00:00:00'), 108)) AS DATETIME2) <= %s
                     THEN 'en_vivo'
                     WHEN %s
-                         AND CAST(CONCAT(CONVERT(varchar(10), %s, 120), ' ', CONVERT(varchar(8), COALESCE(s.hora, '00:00:00'), 108)) AS DATETIME) > GETDATE()
+                         AND CAST(CONCAT(CONVERT(varchar(10), %s, 120), ' ', CONVERT(varchar(8), COALESCE(s.hora, '00:00:00'), 108)) AS DATETIME2) > %s
                     THEN 'proxima'
                     ELSE 'finalizada'
                 END
-                """.formatted(activeStateFilter, dateColumn, activeStateFilter, dateColumn);
+                """.formatted(activeStateFilter, dateColumn, ARGENTINA_NOW, activeStateFilter, dateColumn, ARGENTINA_NOW);
     }
 
     static String principalFlowFilter(String stateColumn, String dateColumn) {

@@ -14,6 +14,8 @@ import java.time.LocalTime;
 import java.time.ZoneId;
 import java.util.Locale;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.support.GeneratedKeyHolder;
@@ -50,10 +52,12 @@ import lombok.RequiredArgsConstructor;
 public class BidRoomService {
 
     private static final int LOT_INACTIVITY_SECONDS = 60;
+    private static final Logger log = LoggerFactory.getLogger(BidRoomService.class);
 
     private final JdbcTemplate jdbcTemplate;
     private final UsuarioAppRepository usuarioAppRepository;
     private final AuctionLotStateService auctionLotStateService;
+    private final AuctionScheduleService auctionScheduleService;
 
     @Transactional
     public AttendeeRegistrationResponse registerAttendee(Integer auctionId, AttendeeRegistrationRequest request) {
@@ -66,6 +70,17 @@ public class BidRoomService {
         AuctionInfo auction = auctionInfo(auctionId);
 
         if (!isAuctionStarted(auction.date(), auction.hour(), auction.state())) {
+            log.info(
+                    "auction-room-blocked auctionId={} fechaConfigurada={} horaConfigurada={} fechaHoraInicio={} ahoraArgentina={} estadoPersistido={} estadoCalculado={} pujasHabilitadas={}",
+                    auction.id(),
+                    auction.date(),
+                    auction.hour(),
+                    auctionScheduleService.scheduledAt(auction.date(), auction.hour()),
+                    auctionScheduleService.now(),
+                    auction.state(),
+                    auctionScheduleService.calculatedStatus(auction.state(), auction.date(), auction.hour()),
+                    false
+            );
             throw new AuctionRoomAccessException("La subasta todavia no comenzo.");
         }
 
@@ -153,6 +168,18 @@ public class BidRoomService {
         AuctionInfo auction = auctionInfo(auctionId);
 
         if (!isAuctionStarted(auction.date(), auction.hour(), auction.state())) {
+            log.info(
+                    "bid-blocked-before-start auctionId={} itemId={} fechaConfigurada={} horaConfigurada={} fechaHoraInicio={} ahoraArgentina={} estadoPersistido={} estadoCalculado={} pujasHabilitadas={}",
+                    auction.id(),
+                    itemId,
+                    auction.date(),
+                    auction.hour(),
+                    auctionScheduleService.scheduledAt(auction.date(), auction.hour()),
+                    auctionScheduleService.now(),
+                    auction.state(),
+                    auctionScheduleService.calculatedStatus(auction.state(), auction.date(), auction.hour()),
+                    false
+            );
             throw new AuctionRoomAccessException("Este lote todavia no esta habilitado para puja.");
         }
 
@@ -256,7 +283,12 @@ public class BidRoomService {
                 BigDecimal basePrice = rs.getBigDecimal("base_price");
                 BigDecimal currentOffer = rs.getBigDecimal("current_offer");
                 String auctionCategory = rs.getString("auction_category");
-                boolean activeLot = auctionLotStateService.isActiveLot(auctionId, itemId);
+                boolean auctionStarted = auctionScheduleService.hasStarted(
+                        toLocalDate(rs.getDate("auction_date")),
+                        toLocalTime(rs.getTime("auction_time")),
+                        "abierta"
+                );
+                boolean activeLot = auctionStarted && auctionLotStateService.isActiveLot(auctionId, itemId);
                 long secondsRemaining = activeLot
                         ? auctionLotStateService.secondsRemaining(auctionId, itemId, LOT_INACTIVITY_SECONDS)
                         : 0;
@@ -837,21 +869,12 @@ public class BidRoomService {
     }
 
     private boolean isAuctionFinished(java.time.LocalDate auctionDate, java.time.LocalTime auctionTime, String auctionState) {
-        return "cerrada".equalsIgnoreCase(auctionState);
+        return auctionScheduleService.isClosedState(auctionState);
     }
 
     private boolean isAuctionStarted(LocalDate auctionDate, LocalTime auctionTime, String state) {
         // Si el estado ya es 'en_vivo' o 'abierta', el admin la abrió explícitamente → siempre permitir
-        String normalizedState = state != null ? state.trim() : "";
-        if ("en_vivo".equalsIgnoreCase(normalizedState) || "abierta".equalsIgnoreCase(normalizedState)) {
-            return true;
-        }
-        // Si el estado es 'proxima' o 'cerrada', verificar por fecha/hora como fallback
-        LocalDateTime startsAt = LocalDateTime.of(
-                auctionDate == null ? LocalDate.now() : auctionDate,
-                auctionTime == null ? LocalTime.MIDNIGHT : auctionTime
-        );
-        return !startsAt.isAfter(LocalDateTime.now());
+        return auctionScheduleService.hasStarted(auctionDate, auctionTime, state);
     }
 
     private Integer nullableInt(java.sql.ResultSet rs, String column) throws java.sql.SQLException {

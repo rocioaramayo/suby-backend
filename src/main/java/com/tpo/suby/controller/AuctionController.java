@@ -1,14 +1,14 @@
 package com.tpo.suby.controller;
 
-import com.tpo.suby.dto.request.bid.BidRequest;
 import com.tpo.suby.dto.request.bid.AttendeeRegistrationRequest;
+import com.tpo.suby.dto.request.bid.BidRequest;
 import com.tpo.suby.dto.response.ApiResponse;
 import com.tpo.suby.dto.response.auction.AuctionDetailResponse;
 import com.tpo.suby.dto.response.auction.AuctionListResponse;
 import com.tpo.suby.dto.response.auction.LotDetailResponse;
 import com.tpo.suby.dto.response.bid.AttendeeRegistrationResponse;
-import com.tpo.suby.dto.response.bid.BidResultResponse;
 import com.tpo.suby.dto.response.bid.BidResponse;
+import com.tpo.suby.dto.response.bid.BidResultResponse;
 import com.tpo.suby.dto.response.bid.LiveBidStatusResponse;
 import com.tpo.suby.exception.AdjudicatedLotException;
 import com.tpo.suby.exception.AttendeeAlreadyRegisteredException;
@@ -17,14 +17,14 @@ import com.tpo.suby.exception.AuctionRoomAccessException;
 import com.tpo.suby.exception.BidRestrictedException;
 import com.tpo.suby.exception.BidResultNotFoundException;
 import com.tpo.suby.exception.InsufficientBalanceException;
-import com.tpo.suby.exception.InvalidQueryParameterException;
 import com.tpo.suby.exception.InvalidBidAmountException;
+import com.tpo.suby.exception.InvalidQueryParameterException;
 import com.tpo.suby.exception.LotNotFoundException;
 import com.tpo.suby.exception.MissingPaymentMethodException;
 import com.tpo.suby.exception.NotFoundException;
 import com.tpo.suby.exception.UnauthorizedException;
-import com.tpo.suby.service.AuctionService;
 import com.tpo.suby.service.AuctionPhotoService;
+import com.tpo.suby.service.AuctionService;
 import com.tpo.suby.service.BidRoomService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.CacheControl;
@@ -228,7 +228,7 @@ public class AuctionController {
         return ResponseEntity.status(HttpStatus.FORBIDDEN).body(
                 Map.of(
                         "status", "failed",
-                        "message", "No tienes acceso a esta subasta. Verificá tu categoría o estado de cuenta."
+                        "message", ex.getMessage()
                 )
         );
     }

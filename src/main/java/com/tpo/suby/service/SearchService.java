@@ -24,6 +24,7 @@ public class SearchService {
     private static final Set<String> VALID_TYPES = Set.of(TYPE_AUCTIONS, TYPE_LOTS);
 
     private final JdbcTemplate jdbcTemplate;
+    private final AuctionScheduleService auctionScheduleService;
 
     public SearchResponse search(String query, String type) {
         String normalizedQuery = normalizeQuery(query);
@@ -50,12 +51,9 @@ public class SearchService {
                 SELECT
                     s.identificador AS id,
                     COALESCE(catalogo.descripcion, CONCAT('Subasta ', s.identificador)) AS name,
-                    CASE
-                        WHEN s.estado = 'abierta' AND CAST(s.fecha AS DATE) = CAST(GETDATE() AS DATE) THEN 'en_vivo'
-                        WHEN s.estado = 'abierta' AND CAST(s.fecha AS DATE) > CAST(GETDATE() AS DATE) THEN 'proxima'
-                        ELSE 'finalizada'
-                    END AS status,
-                    s.fecha AS date
+                    s.estado AS persisted_state,
+                    s.fecha AS date,
+                    s.hora AS hour
                 FROM subastas s
                 OUTER APPLY (
                     SELECT TOP 1 c.descripcion
@@ -85,7 +83,11 @@ public class SearchService {
                 """, (rs, rowNum) -> SearchAuctionItemResponse.builder()
                 .id(rs.getInt("id"))
                 .name(rs.getString("name"))
-                .status(rs.getString("status"))
+                .status(auctionScheduleService.calculatedStatus(
+                        rs.getString("persisted_state"),
+                        toLocalDate(rs.getDate("date")),
+                        rs.getTime("hour") == null ? null : rs.getTime("hour").toLocalTime()
+                ))
                 .date(toLocalDate(rs.getDate("date")))
                 .build(), like, like, like, like, like, like);
     }

@@ -6,6 +6,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -22,28 +24,54 @@ public class AuctionLifecycleService {
     private static final BigDecimal ESTIMATED_SHIPPING_AMOUNT = new BigDecimal("150.00");
     private static final String COMPANY_BUYER_DOCUMENT = "SUBY-COMPANY-BUYER";
     private static final String COMPANY_BUYER_NAME = "Suby";
+    private static final Logger log = LoggerFactory.getLogger(AuctionLifecycleService.class);
 
     private final JdbcTemplate jdbcTemplate;
     private final PrivateMessageService privateMessageService;
     private final AuctionLotStateService auctionLotStateService;
+    private final AuctionScheduleService auctionScheduleService;
 
     @Scheduled(fixedDelay = 10000)
     @Transactional
     public void closeEndedAuctions() {
-        List<AuctionSettlementInfo> activeAuctions = jdbcTemplate.query("""
+        List<AuctionSettlementInfo> candidateAuctions = jdbcTemplate.query("""
                 SELECT
                     s.identificador AS auction_id,
+                    s.fecha AS auction_date,
+                    s.hora AS auction_time,
+                    s.estado AS persisted_state,
                     COALESCE(se.moneda, 'ARS') AS currency
                 FROM subastas s
                 LEFT JOIN subastas_ext se ON se.identificador = s.identificador
-                WHERE s.estado = 'abierta'
-                  AND CAST(CONCAT(CONVERT(varchar(10), s.fecha, 120), ' ', CONVERT(varchar(8), s.hora, 108)) AS DATETIME) <= GETDATE()
+                WHERE LOWER(LTRIM(RTRIM(COALESCE(s.estado, '')))) IN ('abierta', 'activa', 'en_vivo', 'live', 'open')
                 """, (rs, rowNum) -> new AuctionSettlementInfo(
                 rs.getInt("auction_id"),
+                rs.getDate("auction_date").toLocalDate(),
+                rs.getTime("auction_time") == null ? null : rs.getTime("auction_time").toLocalTime(),
+                rs.getString("persisted_state"),
                 rs.getString("currency")
         ));
 
-        for (AuctionSettlementInfo auction : activeAuctions) {
+        for (AuctionSettlementInfo auction : candidateAuctions) {
+            String calculatedState = auctionScheduleService.calculatedStatus(
+                    auction.persistedState(),
+                    auction.date(),
+                    auction.time()
+            );
+            if (!"en_vivo".equals(calculatedState)) {
+                continue;
+            }
+
+            log.info(
+                    "auction-lifecycle-progress auctionId={} fechaConfigurada={} horaConfigurada={} fechaHoraInicio={} ahoraArgentina={} estadoPersistido={} estadoCalculado={}",
+                    auction.id(),
+                    auction.date(),
+                    auction.time(),
+                    auctionScheduleService.scheduledAt(auction.date(), auction.time()),
+                    auctionScheduleService.now(),
+                    auction.persistedState(),
+                    calculatedState
+            );
             progressAuction(auction);
         }
     }
@@ -631,7 +659,13 @@ private WinningBidInfo highestBid(Integer itemId) {
         );
     }
 
-    private record AuctionSettlementInfo(Integer id, String currency) {
+    private record AuctionSettlementInfo(
+            Integer id,
+            java.time.LocalDate date,
+            java.time.LocalTime time,
+            String persistedState,
+            String currency
+    ) {
     }
 
     private record WinningBidInfo(

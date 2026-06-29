@@ -47,6 +47,7 @@ public class PaymentMethodService {
     private final JdbcClient jdbcClient;
     private final UsuarioAppRepository usuarioAppRepository;
     private final UserCategoryService userCategoryService;
+    private final AuctionScheduleService auctionScheduleService;
 
     public PaymentMethodsResponse listPaymentMethods(Integer userId) {
         validateOwner(userId);
@@ -574,18 +575,17 @@ public class PaymentMethodService {
         }
 
         List<Integer> candidateAuctions = jdbcTemplate.query("""
-                SELECT s.identificador
+                SELECT s.identificador, s.fecha, s.hora, s.estado
                 FROM subastas s
-                WHERE s.estado = 'abierta'
-                  AND (
-                        CAST(s.fecha AS DATE) > CAST(GETDATE() AS DATE)
-                        OR (
-                            CAST(s.fecha AS DATE) = CAST(GETDATE() AS DATE)
-                            AND CAST(s.hora AS TIME) >= CAST(GETDATE() AS TIME)
-                        )
-                  )
                 ORDER BY s.fecha ASC, s.hora ASC
-                """, (rs, rowNum) -> rs.getInt("identificador"));
+                """, (rs, rowNum) -> {
+            String calculatedStatus = auctionScheduleService.calculatedStatus(
+                    rs.getString("estado"),
+                    rs.getDate("fecha").toLocalDate(),
+                    rs.getTime("hora") == null ? null : rs.getTime("hora").toLocalTime()
+            );
+            return "finalizada".equals(calculatedStatus) ? null : rs.getInt("identificador");
+        }).stream().filter(java.util.Objects::nonNull).toList();
 
         if (candidateAuctions.size() == 1) {
             return candidateAuctions.get(0);

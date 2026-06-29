@@ -19,6 +19,7 @@ public class HomeService {
 
     private final JdbcTemplate jdbcTemplate;
     private final AuctionPhotoService auctionPhotoService;
+    private final AuctionScheduleService auctionScheduleService;
 
     public HomeResponse getHome() {
         return HomeResponse.builder()
@@ -84,37 +85,28 @@ public class HomeService {
     }
 
     private List<HomeAuctionResponse> getUpcomingAuctions() {
-        String sql = auctionSql("""
-                WHERE %s
-                  AND CAST(s.fecha AS DATE) > CAST(GETDATE() AS DATE)
-                ORDER BY s.fecha ASC, s.hora ASC
-                """.formatted(AuctionStatusSql.activeStateFilter("s.estado")));
-
-        return jdbcTemplate.query(sql, (rs, rowNum) -> toAuctionResponse(rs));
+        return loadHomeAuctions().stream()
+                .filter(item -> "proxima".equals(item.getStatus()))
+                .limit(10)
+                .toList();
     }
 
     private List<HomeAuctionResponse> getLiveAuctions() {
-        String sql = auctionSql("""
-                WHERE %s
-                  AND CAST(s.fecha AS DATE) = CAST(GETDATE() AS DATE)
-                ORDER BY s.hora ASC
-                """.formatted(AuctionStatusSql.activeStateFilter("s.estado")));
-
-        return jdbcTemplate.query(sql, (rs, rowNum) -> toAuctionResponse(rs));
+        return loadHomeAuctions().stream()
+                .filter(item -> "en_vivo".equals(item.getStatus()))
+                .limit(10)
+                .toList();
     }
 
-    private String auctionSql(String filter) {
-        return """
+    private List<HomeAuctionResponse> loadHomeAuctions() {
+        String sql = """
                 SELECT TOP 10
                     s.identificador AS auction_id,
                     COALESCE(catalogo.descripcion, CONCAT('Subasta ', s.identificador)) AS auction_name,
                     ps.nombre AS auctioneer,
                     s.fecha AS auction_date,
                     s.hora AS auction_time,
-                    CASE
-                        WHEN %s AND CAST(s.fecha AS DATE) = CAST(GETDATE() AS DATE) THEN 'en_vivo'
-                        ELSE 'proxima'
-                    END AS status,
+                    s.estado AS persisted_state,
                     s.ubicacion AS location,
                     s.categoria AS category,
                     se.moneda AS currency,
@@ -147,21 +139,26 @@ public class HomeService {
                     WHERE c.subasta = s.identificador
                     ORDER BY ic.identificador ASC, f.identificador ASC
                 ) thumbnail
-                %s
-                """.formatted(
-                AuctionStatusSql.activeStateFilter("s.estado"),
-                filter
-        );
+                WHERE %s
+                ORDER BY s.fecha ASC, s.hora ASC
+                """.formatted(AuctionStatusSql.activeStateFilter("s.estado"));
+
+        return jdbcTemplate.query(sql, (rs, rowNum) -> toAuctionResponse(rs));
     }
 
     private HomeAuctionResponse toAuctionResponse(java.sql.ResultSet rs) throws java.sql.SQLException {
+        String calculatedStatus = auctionScheduleService.calculatedStatus(
+                rs.getString("persisted_state"),
+                toLocalDate(rs.getDate("auction_date")),
+                toLocalTime(rs.getTime("auction_time"))
+        );
         return HomeAuctionResponse.builder()
                 .auctionId(rs.getInt("auction_id"))
                 .auctionName(rs.getString("auction_name"))
                 .auctioneer(rs.getString("auctioneer"))
                 .auctionDate(toLocalDate(rs.getDate("auction_date")))
                 .auctionTime(toLocalTime(rs.getTime("auction_time")))
-                .status(rs.getString("status"))
+                .status(calculatedStatus)
                 .location(rs.getString("location"))
                 .category(rs.getString("category"))
                 .currency(rs.getString("currency"))
