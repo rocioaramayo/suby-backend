@@ -59,4 +59,6 @@ public class AdminProductReviewItemResponse {
 
     @JsonProperty("accepts_usd")
     private String acceptsUsd;
+
+    private String currency;
 }

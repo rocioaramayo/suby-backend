@@ -55,6 +55,16 @@ public class AdminAuctionController {
                 .build());
     }
 
+    @GetMapping("/products/suby-inventory")
+    public ResponseEntity<?> listSubyInventory() {
+        java.util.List<com.tpo.suby.dto.response.admin.AdminProductReviewItemResponse> products =
+                auctionManagementService.listSubyInventory();
+        return ResponseEntity.ok(ApiResponse.<java.util.Map<String, Object>>builder()
+                .status("success")
+                .message(java.util.Map.of("products", products, "total", products.size()))
+                .build());
+    }
+
     @GetMapping("/subastadores")
     public ResponseEntity<?> listSubastadores() {
         return ResponseEntity.ok(ApiResponse.<java.util.List<AdminSubastadorOptionResponse>>builder()

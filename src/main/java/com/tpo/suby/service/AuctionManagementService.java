@@ -84,14 +84,17 @@ public class AuctionManagementService {
                     last_request.fechaSolicitud AS request_date,
                     s.identificador AS auction_id,
                     last_request.monedaPreferida AS preferred_currency,
-                    last_request.aceptaUsd AS accepts_usd
+                    last_request.aceptaUsd AS accepts_usd,
+                    COALESCE(se.moneda, last_request.monedaPreferida, 'ARS') AS currency
                 FROM productos p
                 JOIN duenios d ON d.identificador = p.duenio
                 JOIN personas owner ON owner.identificador = d.identificador
+                LEFT JOIN personas owner_check ON owner_check.identificador = d.identificador
                 LEFT JOIN productos_detalle pd ON pd.identificador = p.identificador
                 LEFT JOIN itemsCatalogo ic ON ic.producto = p.identificador
                 LEFT JOIN catalogos c ON c.identificador = ic.catalogo
                 LEFT JOIN subastas s ON s.identificador = c.subasta
+                LEFT JOIN subastas_ext se ON se.identificador = s.identificador
                 LEFT JOIN seguros seg ON seg.nroPoliza = COALESCE(p.seguro, '')
                 OUTER APPLY (
                     SELECT COUNT(*) AS total_photos
@@ -133,6 +136,7 @@ public class AuctionManagementService {
                       AND pid.valor = CAST(p.identificador AS VARCHAR(20))
                     ORDER BY mp.enviadoEn DESC, mp.identificador DESC
                 ) proposal
+                WHERE owner_check.nroDocumento <> 'SUBY-COMPANY-BUYER'
                 ORDER BY p.identificador DESC
                 """, (rs, rowNum) -> {
             String inspectionStatus = rs.getString("inspection_status");
@@ -160,6 +164,7 @@ public class AuctionManagementService {
                     .canCreateAuction(canCreateAuction)
                     .preferredCurrency(rs.getString("preferred_currency"))
                     .acceptsUsd(rs.getString("accepts_usd"))
+                    .currency(rs.getString("currency"))
                     .build();
         });
 
@@ -1152,4 +1157,69 @@ public class AuctionManagementService {
     private record ProductLotContext(ProductContext context, BigDecimal basePrice) {}
 
     private record PolicyUsage(Integer assignedElsewhere, Integer assignedHere) {}
+
+    public List<AdminProductReviewItemResponse> listSubyInventory() {
+        validateAdminAccess();
+        return jdbcTemplate.query("""
+                SELECT
+                    p.identificador AS product_id,
+                    p.duenio AS owner_id,
+                    owner.nombre AS owner_name,
+                    COALESCE(pd.titulo, NULLIF(p.descripcionCatalogo, 'No Posee'), p.descripcionCompleta) AS title,
+                    CASE
+                        WHEN LOWER(COALESCE(pd.esObraDeArte, 'no')) = 'si' THEN 'arte'
+                        WHEN s.identificador IS NOT NULL THEN s.categoria
+                        ELSE 'general'
+                    END AS category,
+                    'aceptado' AS inspection_status,
+                    COALESCE(photo_count.total_photos, 0) AS photo_count,
+                    COALESCE(ic.precioBase, seg.importe, 0) AS estimated_value,
+                    ic.precioBase AS published_base_price,
+                    NULL AS proposed_base_price,
+                    NULL AS proposal_message_id,
+                    thumbnail.photo_id AS thumbnail_photo_id,
+                    NULL AS request_date,
+                    s.identificador AS auction_id,
+                    NULL AS preferred_currency,
+                    NULL AS accepts_usd,
+                    COALESCE(se.moneda, 'ARS') AS currency
+                FROM productos p
+                JOIN duenios d ON d.identificador = p.duenio
+                JOIN personas owner ON owner.identificador = d.identificador
+                LEFT JOIN productos_detalle pd ON pd.identificador = p.identificador
+                LEFT JOIN itemsCatalogo ic ON ic.producto = p.identificador
+                LEFT JOIN catalogos c ON c.identificador = ic.catalogo
+                LEFT JOIN subastas s ON s.identificador = c.subasta
+                LEFT JOIN subastas_ext se ON se.identificador = s.identificador
+                LEFT JOIN seguros seg ON seg.nroPoliza = COALESCE(p.seguro, '')
+                OUTER APPLY (
+                    SELECT COUNT(*) AS total_photos
+                    FROM fotos f
+                    WHERE f.producto = p.identificador
+                ) photo_count
+                OUTER APPLY (
+                    SELECT TOP 1
+                        f.identificador AS photo_id
+                    FROM fotos f
+                    WHERE f.producto = p.identificador
+                    ORDER BY f.identificador ASC
+                ) thumbnail
+                WHERE owner.nroDocumento = 'SUBY-COMPANY-BUYER'
+                ORDER BY p.identificador DESC
+                """, (rs, rowNum) -> AdminProductReviewItemResponse.builder()
+                .productId(rs.getInt("product_id"))
+                .ownerId(rs.getInt("owner_id"))
+                .ownerName(rs.getString("owner_name"))
+                .title(rs.getString("title"))
+                .category(rs.getString("category"))
+                .inspectionStatus(rs.getString("inspection_status"))
+                .photoCount(rs.getInt("photo_count"))
+                .estimatedValue(rs.getBigDecimal("estimated_value"))
+                .publishedBasePrice(rs.getBigDecimal("published_base_price"))
+                .thumbnailUrl(buildItemPhotoUrl(rs.getInt("product_id"), nullableInteger(rs, "thumbnail_photo_id")))
+                .auctionId(nullableInteger(rs, "auction_id"))
+                .canCreateAuction(false)
+                .currency(rs.getString("currency"))
+                .build());
+    }
 }
