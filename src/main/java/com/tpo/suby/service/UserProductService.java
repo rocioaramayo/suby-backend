@@ -39,6 +39,7 @@ public class UserProductService {
     private final JdbcTemplate jdbcTemplate;
     private final UsuarioAppRepository usuarioAppRepository;
     private final PrivateMessageService privateMessageService;
+    private final ProductDepositService productDepositService;
 
     public OwnerProductsResponse listOwnerProducts(Integer userId) {
         Integer authenticatedUserId = resolveAuthenticatedOwnerId(userId);
@@ -53,23 +54,23 @@ public class UserProductService {
 
         List<OwnerProductItemResponse> products = jdbcTemplate.query(ownerProductsSql(),
                 (rs, rowNum) -> OwnerProductItemResponse.builder()
-                .productId(rs.getInt("product_id"))
-                .name(rs.getString("name"))
-                .category(rs.getString("category"))
-                .dateRegistered(toLocalDate(rs.getDate("date_registered")))
-                .inspectionStatus(rs.getString("inspection_status"))
-                .available(rs.getString("available"))
-                .insurancePolicy(rs.getString("insurance_policy"))
-                .insurancePhone(rs.getString("insurance_phone"))
-                .deposit(rs.getObject("deposit_id") == null ? null : OwnerProductDepositResponse.builder()
-                        .id(rs.getInt("deposit_id"))
-                        .name(rs.getString("deposit_name"))
-                        .address(rs.getString("deposit_address"))
-                        .build())
-                .estimatedValue(rs.getBigDecimal("estimated_value"))
-                .catalogDescription(rs.getString("catalog_description"))
-                .thumbnailUrl(firstOwnerProductPhotoUrl(authenticatedUserId, rs.getInt("product_id")))
-                .build(), authenticatedUserId);
+                        .productId(rs.getInt("product_id"))
+                        .name(rs.getString("name"))
+                        .category(rs.getString("category"))
+                        .dateRegistered(toLocalDate(rs.getDate("date_registered")))
+                        .inspectionStatus(rs.getString("inspection_status"))
+                        .available(rs.getString("available"))
+                        .insurancePolicy(rs.getString("insurance_policy"))
+                        .insurancePhone(rs.getString("insurance_phone"))
+                        .deposit(rs.getObject("deposit_id") == null ? null : OwnerProductDepositResponse.builder()
+                                .id(rs.getInt("deposit_id"))
+                                .name(rs.getString("deposit_name"))
+                                .address(rs.getString("deposit_address"))
+                                .build())
+                        .estimatedValue(rs.getBigDecimal("estimated_value"))
+                        .catalogDescription(rs.getString("catalog_description"))
+                        .thumbnailUrl(firstOwnerProductPhotoUrl(authenticatedUserId, rs.getInt("product_id")))
+                        .build(), authenticatedUserId);
 
         int accepted = (int) products.stream()
                 .filter(product -> "aceptado".equalsIgnoreCase(product.getInspectionStatus()))
@@ -104,11 +105,11 @@ public class UserProductService {
                     COALESCE(p.disponible, 'no') AS available,
                     COALESCE(pe.nroPoliza, p.seguro) AS insurance_policy,
                     %s AS insurance_phone,
-                dep.identificador AS deposit_id,
-                dep.nombre AS deposit_name,
-                dep.direccion AS deposit_address,
-                COALESCE(ic.precioBase, proposal.proposed_base_price, seg.importe, 0) AS estimated_value,
-                p.descripcionCatalogo AS catalog_description
+                    dep.identificador AS deposit_id,
+                    dep.nombre AS deposit_name,
+                    dep.direccion AS deposit_address,
+                    COALESCE(ic.precioBase, proposal.proposed_base_price, seg.importe, 0) AS estimated_value,
+                    p.descripcionCatalogo AS catalog_description
                 FROM productos p
                 LEFT JOIN productos_ext pe ON pe.identificador = p.identificador
                 LEFT JOIN productos_detalle pd ON pd.identificador = p.identificador
@@ -179,6 +180,7 @@ public class UserProductService {
             String fullDescription,
             Boolean ownershipDeclaration,
             Integer receivingAccountId,
+            Integer requestedDepositId,
             String preferredCurrency,
             Boolean acceptsUsd,
             Boolean isArt,
@@ -190,7 +192,6 @@ public class UserProductService {
     ) {
 
         Integer authenticatedUserId = resolveAuthenticatedOwnerId(userId);
-
 
         if (isBlank(name)
                 || isBlank(condition)
@@ -204,9 +205,10 @@ public class UserProductService {
             throw new OwnerProductValidationException("Invalid owner product request.");
         }
 
-
         validatePhotos(photos);
         ensureOwnerProfileExists(authenticatedUserId);
+        ProductDepositService.AssignedDeposit assignedDeposit =
+                productDepositService.resolveAssignedDeposit(requestedDepositId);
 
         BankAccountData receivingAccount = loadReceivingAccount(authenticatedUserId, receivingAccountId);
         ensureDestinationAccount(authenticatedUserId, receivingAccount);
@@ -220,8 +222,8 @@ public class UserProductService {
 
         jdbcTemplate.update("""
                 INSERT INTO productos_ext (identificador, deposito, nroPoliza)
-                VALUES (?, NULL, NULL)
-                """, productId);
+                VALUES (?, ?, NULL)
+                """, productId, assignedDeposit.id());
 
         jdbcTemplate.update("""
                 INSERT INTO productos_detalle (
@@ -264,13 +266,8 @@ public class UserProductService {
         if (firstPhotoUrl != null) {
             submissionData.put("image_url", firstPhotoUrl);
         }
-        submissionData.put("summary", "Tu solicitud fue recibida. Revisá los datos enviados y aguardá la evaluación del equipo.");
-        submissionData.put("inspection_summary", "Tu artículo necesita ser evaluado. A continuación encontrarás la dirección del depósito comercial para incluirlo en nuestra próxima inspección.");
-        submissionData.put("hours", "8:00 A 23:00 Hs");
-        submissionData.put("days", "Lunes A Jueves");
-        submissionData.put("location", "Salón San Telmo, CABA");
-        submissionData.put("address", "Lima 777");
-        submissionData.put("clarification", "Timbre 3");
+        submissionData.put("summary", "Tu solicitud fue recibida. Revisa los datos enviados y aguarda la evaluacion del equipo.");
+        productDepositService.applySubmissionDepositData(submissionData, assignedDeposit);
         submissionData.put("cta_label", "Ver mis bienes");
         submissionData.put("cta_target", "/profile");
         submissionData.put("flow_kind", "submission_received");
@@ -278,12 +275,12 @@ public class UserProductService {
         privateMessageService.createPrivateMessage(
                 authenticatedUserId,
                 "aviso_general",
-                "Recibimos tu solicitud — detalles de envío",
-                "Tu artículo fue enviado correctamente y quedó pendiente de revisión.",
+                "Recibimos tu solicitud - detalles de envio",
+                "Tu articulo fue enviado correctamente y quedo pendiente de revision.",
                 submissionData
         );
 
-        return "Tu artículo fue enviado para revisión. Quedó pendiente y sin póliza hasta que administración lo evalúe.";
+        return "Tu articulo fue enviado para revision. Quedo pendiente y sin poliza hasta que administracion lo evalue.";
     }
 
     public ProductPhotoBinary loadOwnerProductPhoto(Integer userId, Integer productId, Integer photoId) {
@@ -571,7 +568,7 @@ public class UserProductService {
         String normalized = value.trim().toUpperCase(Locale.ROOT);
         return switch (normalized) {
             case "ARS", "USD" -> normalized;
-            default -> throw new OwnerProductValidationException("Moneda inválida. Debe ser ARS o USD.");
+            default -> throw new OwnerProductValidationException("Moneda invalida. Debe ser ARS o USD.");
         };
     }
 
@@ -600,7 +597,7 @@ public class UserProductService {
             return origin;
         }
 
-        return origin + "\n\nContexto histórico: " + context;
+        return origin + "\n\nContexto historico: " + context;
     }
 
     private String normalizeArtFlag(Boolean isArt, String name, String fullDescription) {
@@ -650,7 +647,6 @@ public class UserProductService {
                 .toLowerCase(Locale.ROOT);
         return combined.contains("arte")
                 || combined.contains("oleo")
-                || combined.contains("óleo")
                 || combined.contains("pintura")
                 || combined.contains("escultura")
                 ? "si"

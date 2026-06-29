@@ -36,6 +36,7 @@ public class UserNotificationService {
 
     private final JdbcTemplate jdbcTemplate;
     private final UsuarioAppRepository usuarioAppRepository;
+    private final ProductDepositService productDepositService;
 
     public UserNotificationsResponse getNotifications(Integer userId, Boolean unreadOnly) {
         validateOwner(userId);
@@ -389,6 +390,10 @@ public class UserNotificationService {
             if (productInfo != null) {
                 data.putIfAbsent("product_name", productInfo.name());
                 data.putIfAbsent("product_code", "PROD-" + productId.get());
+            }
+
+            if ("submission_received".equalsIgnoreCase(data.get("flow_kind"))) {
+                productDepositService.applySubmissionDepositData(data, productId.get());
             }
         }
 
