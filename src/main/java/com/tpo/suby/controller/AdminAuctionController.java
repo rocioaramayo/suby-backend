@@ -8,7 +8,6 @@ import com.tpo.suby.dto.request.admin.ProposeProductRequest;
 import com.tpo.suby.dto.request.admin.RejectPaymentMethodRequest;
 import com.tpo.suby.dto.request.admin.RejectUserOnboardingRequest;
 import com.tpo.suby.dto.request.admin.RejectProductRequest;
-import com.tpo.suby.dto.request.admin.AssignProductInsuranceRequest;
 import com.tpo.suby.dto.request.admin.UpdateUserCategoryRequest;
 import com.tpo.suby.dto.response.ApiResponse;
 import com.tpo.suby.dto.response.admin.AdminAuctionCreationResponse;
@@ -180,9 +179,12 @@ public class AdminAuctionController {
     @PostMapping("/products/{productId}/insurance")
     public ResponseEntity<?> assignProductInsurance(
             @PathVariable Integer productId,
-            @RequestBody AssignProductInsuranceRequest request
+            @RequestBody(required = false) Map<String, Object> request
     ) {
-        String message = auctionManagementService.assignProductInsurance(productId, request);
+        String insurancePolicy = request == null ? null : request.get("insurance_policy") == null
+                ? null
+                : String.valueOf(request.get("insurance_policy"));
+        String message = auctionManagementService.assignProductInsurance(productId, insurancePolicy);
         return ResponseEntity.ok(Map.of(
                 "status", "success",
                 "message", message

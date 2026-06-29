@@ -30,6 +30,7 @@ public class AuctionLifecycleService {
     private final PrivateMessageService privateMessageService;
     private final AuctionLotStateService auctionLotStateService;
     private final AuctionScheduleService auctionScheduleService;
+    private final AuctionPhotoService auctionPhotoService;
 
     @Scheduled(fixedDelay = 10000)
     @Transactional
@@ -135,8 +136,6 @@ public class AuctionLifecycleService {
                 WHERE identificador = ?
                 """, itemId);
 
-        transferProductOwnershipIfPossible(winningBid.productId(), winningBid.clientId());
-
         BigDecimal commissionAmount = commissionAmount(winningBid.commission(), winningBid.basePrice(), winningBid.amount());
         Integer registroId = ensureRegistroSubasta(
                 auction.id(),
@@ -146,6 +145,9 @@ public class AuctionLifecycleService {
                 winningBid.amount(),
                 commissionAmount
         );
+
+        transferProductOwnershipIfPossible(winningBid.productId(), winningBid.clientId());
+
         ensurePaymentNotification(
                 winningBid.clientId(),
                 registroId,
@@ -161,6 +163,20 @@ public class AuctionLifecycleService {
                 auction.currency(),
                 winningBid.productId(),
                 itemId
+        );
+        ensureOwnerSaleNotification(
+                winningBid.ownerId(),
+                auction.id(),
+                itemId,
+                winningBid.productId(),
+                winningBid.itemTitle(),
+                winningBid.auctionName(),
+                winningBid.amount(),
+                commissionAmount,
+                auction.currency(),
+                registroId,
+                null,
+                "owner_item_sold"
         );
         insertPenaltiesIfOverspent(
                 winningBid.clientId(),
@@ -191,27 +207,31 @@ public class AuctionLifecycleService {
                 WHERE identificador = ?
                 """, itemId);
 
-        jdbcTemplate.update("""
-                UPDATE productos
-                SET duenio = ?
-                WHERE identificador = ?
-                """, companyBuyerId, item.productId());
-
-        ensureRegistroSubasta(
+        BigDecimal commissionAmount = commissionAmount(item.commission(), item.basePrice(), item.basePrice());
+        Integer registroId = ensureRegistroSubasta(
                 auction.id(),
                 item.ownerId(),
                 item.productId(),
                 companyBuyerId,
                 item.basePrice(),
-                new BigDecimal("0.02")
+                commissionAmount
         );
-        ensureCompanyPurchaseMessage(
+
+        transferProductOwnershipIfPossible(item.productId(), companyBuyerId);
+
+        ensureOwnerSaleNotification(
                 item.ownerId(),
+                auction.id(),
                 item.itemId(),
                 item.productId(),
                 item.itemTitle(),
                 item.auctionName(),
-                item.basePrice()
+                item.basePrice(),
+                commissionAmount,
+                auction.currency(),
+                registroId,
+                COMPANY_BUYER_NAME,
+                "company_purchase"
         );
     }
 
@@ -411,8 +431,217 @@ private WinningBidInfo highestBid(Integer itemId) {
         }
     }
 
+    private void ensureOwnerSaleNotification(
+            Integer ownerId,
+            Integer auctionId,
+            Integer itemId,
+            Integer productId,
+            String itemTitle,
+            String auctionName,
+            BigDecimal saleAmount,
+            BigDecimal commissionAmount,
+            String currency,
+            Integer registroId,
+            String purchaserName,
+            String flowKind
+    ) {
+        if (ownerId == null || ownerId <= 0 || registroId == null) {
+            return;
+        }
+
+        if (ownerSaleNotificationExists(ownerId, registroId, flowKind)) {
+            return;
+        }
+
+        String normalizedCurrency = normalizeCurrency(currency, "ARS");
+        BigDecimal safeSaleAmount = safeAmount(saleAmount);
+        BigDecimal safeCommissionAmount = safeAmount(commissionAmount);
+        BigDecimal netAmount = safeSaleAmount.subtract(safeCommissionAmount).setScale(2, RoundingMode.HALF_UP);
+        DestinationAccountInfo destinationAccount = resolveDestinationAccount(ownerId, normalizedCurrency);
+        Integer firstPhotoId = firstItemPhotoId(itemId);
+        String imageUrl = auctionPhotoService.buildItemPhotoUrl(itemId, firstPhotoId);
+        boolean missingAccount = destinationAccount == null;
+
+        Map<String, String> data = new LinkedHashMap<>();
+        data.put("headline", "Tu bien fue vendido");
+        data.put("flow_kind", flowKind);
+        data.put("sale_record_id", String.valueOf(registroId));
+        data.put("auction_id", String.valueOf(auctionId));
+        data.put("item_id", String.valueOf(itemId));
+        data.put("product_id", String.valueOf(productId));
+        data.put("product_code", "PROD-" + productId);
+        data.put("lot_code", "LOT-" + String.format("%03d", itemId));
+        data.put("product_name", defaultText(itemTitle));
+        data.put("auction_name", defaultText(auctionName));
+        data.put("sale_amount", formatMoney(safeSaleAmount, normalizedCurrency));
+        data.put("commission_pct", commissionPercentageText(safeCommissionAmount, safeSaleAmount));
+        data.put("commission_amount", formatMoney(safeCommissionAmount, normalizedCurrency));
+        data.put("net_amount", formatMoney(netAmount, normalizedCurrency));
+        data.put("currency", normalizedCurrency);
+        data.put("summary", missingAccount
+                ? "Tu bien fue adquirido, pero no encontramos una cuenta destino compatible con %s. Configurá una cuenta para recibir la transferencia."
+                        .formatted(normalizedCurrency)
+                : "Tu bien fue adquirido. El monto neto será transferido a la cuenta seleccionada.");
+        if (purchaserName != null && !purchaserName.isBlank()) {
+            data.put("buyer_name", purchaserName);
+        }
+        if (imageUrl != null) {
+            data.put("image_url", imageUrl);
+        }
+        data.put("destination_account_missing", missingAccount ? "si" : "no");
+        data.put("cta_label", missingAccount ? "Agregar cuenta" : "Ver mensajes");
+        data.put("cta_target", missingAccount ? "/payment-methods/new" : "/notifications");
+
+        if (!missingAccount) {
+            data.put("destination_account_id", String.valueOf(destinationAccount.id()));
+            data.put("destination_account_label", destinationAccount.label());
+        }
+
+        privateMessageService.createPrivateMessage(
+                ownerId,
+                "aviso_general",
+                "Tu bien fue vendido",
+                missingAccount
+                        ? "Tu bien fue adquirido en la subasta, pero necesitás configurar una cuenta destino compatible con %s para recibir la transferencia."
+                                .formatted(normalizedCurrency)
+                        : "Tu bien fue adquirido en la subasta. El monto neto será transferido a la cuenta seleccionada.",
+                data
+        );
+    }
+
+    private boolean ownerSaleNotificationExists(Integer ownerId, Integer registroId, String flowKind) {
+        Integer count = jdbcTemplate.queryForObject("""
+                SELECT COUNT(*)
+                FROM mensajes_privados mp
+                JOIN mensajes_datos rid ON rid.mensaje = mp.identificador
+                    AND rid.clave = 'sale_record_id'
+                    AND rid.valor = ?
+                LEFT JOIN mensajes_datos fk ON fk.mensaje = mp.identificador
+                    AND fk.clave = 'flow_kind'
+                WHERE mp.destinatario = ?
+                  AND mp.tipo = 'aviso_general'
+                  AND COALESCE(fk.valor, '') = ?
+                """, Integer.class, String.valueOf(registroId), ownerId, flowKind);
+
+        return count != null && count > 0;
+    }
+
+    private DestinationAccountInfo resolveDestinationAccount(Integer ownerId, String currency) {
+        try {
+            return jdbcTemplate.queryForObject("""
+                    SELECT TOP 1
+                        cdv.identificador AS account_id,
+                        cdv.moneda AS currency,
+                        cdv.banco AS bank_name,
+                        cdv.numeroCuenta AS account_number,
+                        cdv.cbu AS cbu,
+                        cdv.swift AS swift,
+                        cdv.iban AS iban
+                    FROM cuentasDestinoVenta cdv
+                    WHERE cdv.duenio = ?
+                      AND UPPER(LTRIM(RTRIM(COALESCE(cdv.moneda, '')))) = UPPER(LTRIM(RTRIM(COALESCE(?, 'ARS'))))
+                      AND LOWER(LTRIM(RTRIM(COALESCE(cdv.estado, '')))) = 'verificada'
+                    ORDER BY cdv.identificador DESC
+                    """, (rs, rowNum) -> {
+                String bankName = rs.getString("bank_name");
+                String accountNumber = rs.getString("account_number");
+                String cbu = rs.getString("cbu");
+                String swift = rs.getString("swift");
+                String iban = rs.getString("iban");
+                return new DestinationAccountInfo(
+                        rs.getInt("account_id"),
+                        normalizeCurrency(rs.getString("currency"), "ARS"),
+                        bankName,
+                        accountNumber,
+                        cbu,
+                        swift,
+                        iban,
+                        buildDestinationAccountLabel(bankName, accountNumber, cbu, swift, iban)
+                );
+            }, ownerId, currency);
+        } catch (EmptyResultDataAccessException ex) {
+            log.warn("No valid destination account found for owner {} and currency {}", ownerId, currency);
+            return null;
+        }
+    }
+
+    private String buildDestinationAccountLabel(String bankName, String accountNumber, String cbu, String swift, String iban) {
+        String bank = defaultText(bankName);
+        String suffix = maskedAccountSuffix(accountNumber, cbu, swift, iban);
+        return "%s · %s".formatted(bank, suffix);
+    }
+
+    private String maskedAccountSuffix(String accountNumber, String cbu, String swift, String iban) {
+        String reference = firstNonBlank(cbu, iban, swift, accountNumber);
+        if (reference == null || reference.isBlank()) {
+            return "Cuenta destino";
+        }
+
+        String digits = reference.replaceAll("\\D", "");
+        String last4;
+        if (digits.length() >= 4) {
+            last4 = digits.substring(digits.length() - 4);
+        } else if (reference.length() >= 4) {
+            last4 = reference.substring(reference.length() - 4);
+        } else {
+            last4 = reference;
+        }
+
+        String kind = cbu != null && !cbu.isBlank()
+                ? "CBU"
+                : iban != null && !iban.isBlank()
+                ? "IBAN"
+                : "Cuenta";
+        return kind + " terminado en " + last4;
+    }
+
+    private String firstNonBlank(String... values) {
+        for (String value : values) {
+            if (value != null && !value.isBlank()) {
+                return value;
+            }
+        }
+        return null;
+    }
+
+    private Integer firstItemPhotoId(Integer itemId) {
+        try {
+            return jdbcTemplate.queryForObject("""
+                    SELECT TOP 1 f.identificador
+                    FROM itemsCatalogo ic
+                    JOIN fotos f ON f.producto = ic.producto
+                    WHERE ic.identificador = ?
+                    ORDER BY f.identificador ASC
+                    """, Integer.class, itemId);
+        } catch (EmptyResultDataAccessException ex) {
+            return null;
+        }
+    }
+
     private String formatMoney(BigDecimal amount) {
         return "$ " + amount.setScale(2, RoundingMode.HALF_UP);
+    }
+
+    private String formatMoney(BigDecimal amount, String currency) {
+        BigDecimal safeAmount = safeAmount(amount);
+        String symbol = "USD".equalsIgnoreCase(normalizeCurrency(currency, "ARS")) ? "US$ " : "$ ";
+        return symbol + safeAmount.setScale(2, RoundingMode.HALF_UP);
+    }
+
+    private String commissionPercentageText(BigDecimal commissionAmount, BigDecimal saleAmount) {
+        BigDecimal safeSaleAmount = safeAmount(saleAmount);
+        if (safeSaleAmount.compareTo(BigDecimal.ZERO) <= 0) {
+            return "0.00";
+        }
+
+        BigDecimal pct = safeAmount(commissionAmount)
+                .multiply(new BigDecimal("100"))
+                .divide(safeSaleAmount, 2, RoundingMode.HALF_UP);
+        return pct.setScale(2, RoundingMode.HALF_UP).toPlainString();
+    }
+
+    private BigDecimal safeAmount(BigDecimal amount) {
+        return amount == null ? BigDecimal.ZERO : amount.setScale(2, RoundingMode.HALF_UP);
     }
 
     private void insertPenaltiesIfOverspent(
@@ -561,6 +790,13 @@ private WinningBidInfo highestBid(Integer itemId) {
         return value == null || value.isBlank() ? "tu operacion" : value;
     }
 
+    private String normalizeCurrency(String value, String fallback) {
+        if (value == null || value.isBlank()) {
+            return fallback;
+        }
+        return value.trim().toUpperCase();
+    }
+
     private Integer ensureCompanyBuyerProfile() {
         Integer personId = jdbcTemplate.query("""
                 SELECT identificador
@@ -630,35 +866,6 @@ private WinningBidInfo highestBid(Integer itemId) {
                 """, Integer.class);
     }
 
-    private void ensureCompanyPurchaseMessage(
-            Integer ownerId,
-            Integer itemId,
-            Integer productId,
-            String itemTitle,
-            String auctionName,
-            BigDecimal amount
-    ) {
-        Map<String, String> data = new LinkedHashMap<>();
-        data.put("headline", "Sin pujas - Suby compro tu articulo");
-        data.put("product_id", String.valueOf(productId));
-        data.put("product_name", defaultText(itemTitle));
-        data.put("product_code", "LOT-" + String.format("%03d", itemId));
-        data.put("item_id", String.valueOf(itemId));
-        data.put("auction_name", defaultText(auctionName));
-        data.put("sale_amount", formatMoney(amount));
-        data.put("summary", "Tu articulo no recibio ofertas durante la sesion. Conforme a las condiciones de la subasta, Suby compro el lote por %s."
-                .formatted(formatMoney(amount)));
-
-        privateMessageService.createPrivateMessage(
-                ownerId,
-                "aviso_general",
-                "Sin pujas - Suby compro tu articulo",
-                "Tu articulo no recibio ofertas durante la sesion. Conforme a las condiciones de la subasta, Suby compro el lote por %s en %s."
-                        .formatted(formatMoney(amount), defaultText(auctionName)),
-                data
-        );
-    }
-
     private record AuctionSettlementInfo(
             Integer id,
             java.time.LocalDate date,
@@ -690,6 +897,18 @@ private WinningBidInfo highestBid(Integer itemId) {
             Integer ownerId,
             String itemTitle,
             String auctionName
+    ) {
+    }
+
+    private record DestinationAccountInfo(
+            Integer id,
+            String currency,
+            String bankName,
+            String accountNumber,
+            String cbu,
+            String swift,
+            String iban,
+            String label
     ) {
     }
 }
