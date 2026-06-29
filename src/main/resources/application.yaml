@@ -5,42 +5,27 @@ spring:
       max-request-size: 80MB
 
   datasource:
-    url: jdbc:sqlserver://localhost:1433;databaseName=suby;encrypt=false;trustServerCertificate=true
-    username: subyuser
-    password: Suby123456
+    url: ${DB_URL}
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
     driver-class-name: com.microsoft.sqlserver.jdbc.SQLServerDriver
 
   jpa:
     show-sql: true
-
     hibernate:
       ddl-auto: none
       naming:
         physical-strategy: org.hibernate.boot.model.naming.PhysicalNamingStrategyStandardImpl
-
     properties:
       hibernate:
         dialect: org.hibernate.dialect.SQLServerDialect
         format_sql: true
 
-  mail:
-    host: smtp.gmail.com
-    port: 587
-    username: rocioaramay@gmail.com
-    password: "amei gbzy bxce mmon"
-
-    properties:
-      mail:
-        smtp:
-          auth: true
-          starttls:
-            enable: true
-
 server:
-  port: 8080
+  port: ${PORT:8080}
 
 application:
   security:
     jwt:
-      secretKey: suby_super_secret_key_suby_super_secret_key_2026
+      secretKey: ${JWT_SECRET}
       expiration: 86400000
