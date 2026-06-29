@@ -206,7 +206,7 @@ public class ProductDepositService {
 
     private String statusPriorityExpression(String alias) {
         if (!columnExists("depositos", "estado")) {
-            return "0";
+            return "CASE WHEN 1 = 1 THEN 0 ELSE 0 END";
         }
 
         return """
