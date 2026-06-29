@@ -141,6 +141,7 @@ public class UserNotificationService {
                     CASE
                         WHEN mp.tipo = 'aviso_general' AND fk.valor = 'proposal_price'    THEN 'propuesta_precio'
                         WHEN mp.tipo = 'aviso_general' AND fk.valor = 'diferencia_saldo'  THEN 'diferencia_saldo'
+                        WHEN mp.tipo = 'aviso_general' AND fk.valor = 'owner_item_sold'   THEN 'bien_vendido'
                         ELSE mp.tipo
                     END AS type,
                     mp.asunto AS title,

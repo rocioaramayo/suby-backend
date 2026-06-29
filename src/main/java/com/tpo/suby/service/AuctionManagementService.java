@@ -26,7 +26,6 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import com.tpo.suby.dto.request.admin.AssignProductInsuranceRequest;
 import com.tpo.suby.dto.request.admin.CreateAuctionLotRequest;
 import com.tpo.suby.dto.request.admin.CreateAuctionRequest;
 import com.tpo.suby.dto.request.admin.CreateProductInsuranceRequest;
@@ -355,20 +354,18 @@ public class AuctionManagementService {
     }
 
     @Transactional
-    public String assignProductInsurance(Integer productId, AssignProductInsuranceRequest request) {
+    public String assignProductInsurance(Integer productId, String insurancePolicy) {
         resolveOperatorId();
         ProductContext context = loadProductContext(productId);
         ensureApprovedProductForInsurance(context);
 
-        String insurancePolicy = request == null || isBlank(request.getInsurancePolicy())
-                ? null
-                : request.getInsurancePolicy().trim();
+        String normalizedPolicy = isBlank(insurancePolicy) ? null : insurancePolicy.trim();
 
-        if (insurancePolicy == null) {
+        if (normalizedPolicy == null) {
             throw new OwnerProductValidationException("Debés indicar una póliza válida.");
         }
 
-        assignInsurancePolicy(context, insurancePolicy);
+        assignInsurancePolicy(context, normalizedPolicy);
         return "La póliza fue asignada correctamente al producto.";
     }
 
