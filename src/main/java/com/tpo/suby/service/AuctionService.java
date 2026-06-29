@@ -166,8 +166,10 @@ public class AuctionService {
                             s.ubicacion AS location,
                             sub.identificador AS auctioneer_id,
                             ps.nombre AS auctioneer_name,
-                            sub.matricula AS auctioneer_license
+                            sub.matricula AS auctioneer_license,
+                            se.moneda AS currency
                         FROM subastas s
+                        LEFT JOIN subastas_ext se ON se.identificador = s.identificador
                         LEFT JOIN subastadores sub ON sub.identificador = s.subastador
                         LEFT JOIN personas ps ON ps.identificador = sub.identificador
                         OUTER APPLY (
@@ -186,6 +188,7 @@ public class AuctionService {
                         .status(rs.getString("status"))
                         .category(rs.getString("category"))
                         .location(rs.getString("location"))
+                        .currency(rs.getString("currency"))
                         .auctioneer(AuctioneerResponse.builder()
                                 .id(nullableInt(rs, "auctioneer_id"))
                                 .name(rs.getString("auctioneer_name"))
@@ -253,6 +256,7 @@ public class AuctionService {
                     .status(detail.getStatus())
                     .category(detail.getCategory())
                     .location(detail.getLocation())
+                    .currency(detail.getCurrency())
                     .auctioneer(detail.getAuctioneer())
                     .catalog(AuctionCatalogResponse.builder()
                             .id(detail.getCatalog().getId())
