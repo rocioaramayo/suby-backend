@@ -226,11 +226,13 @@ public class UserProductService {
         jdbcTemplate.update("""
                 INSERT INTO productos_detalle (
                     identificador, titulo, descripcionLarga, artista,
-                    fechaCreacion, historia, esObraDeArte,categoriaTematica
+                    fechaCreacion, historia, esObraDeArte, categoriaTematica,
+                    condicion
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?,?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, productId, name, fullDescription, nullableTrim(artist), creationDate,
-                buildHistory(originProvenance, historicalContext), normalizeArtFlag(isArt, name, fullDescription),category);
+                buildHistory(originProvenance, historicalContext), normalizeArtFlag(isArt, name, fullDescription), category,
+                nullableTrim(condition));
 
         for (MultipartFile photo : photos) {
             insertPhoto(productId, photo);

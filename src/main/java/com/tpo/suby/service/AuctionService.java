@@ -274,11 +274,11 @@ public class AuctionService {
                         CONCAT('LOT-', RIGHT(CONCAT('000', ic.identificador), 3)) AS lot_code,
                         p.descripcionCatalogo AS title,
                         s.categoria AS category,
-                        CAST(NULL AS VARCHAR(250)) AS artist,
-                        CAST(NULL AS VARCHAR(100)) AS period,
+                        COALESCE(pd.artista, '') AS artist,
+                        CONVERT(VARCHAR(10), pd.fechaCreacion, 23) AS period,
                         p.descripcionCompleta AS description,
-                        CAST(NULL AS VARCHAR(500)) AS conservation_state,
-                        CAST(NULL AS VARCHAR(500)) AS provenance,
+                        COALESCE(pd.condicion, '') AS conservation_state,
+                        COALESCE(pd.historia, '') AS provenance,
                         ic.precioBase AS base_price,
                         COALESCE(offers.current_offer, ic.precioBase) AS current_offer,
                         COALESCE(ic.subastado, 'no') AS auctioned,
@@ -297,6 +297,7 @@ public class AuctionService {
                     JOIN catalogos c ON c.subasta = s.identificador
                     JOIN itemsCatalogo ic ON ic.catalogo = c.identificador
                     JOIN productos p ON p.identificador = ic.producto
+                    LEFT JOIN productos_detalle pd ON pd.identificador = p.identificador
                     LEFT JOIN duenios d ON d.identificador = p.duenio
                     LEFT JOIN personas owner ON owner.identificador = d.identificador
                     LEFT JOIN subastadores sub ON sub.identificador = s.subastador
