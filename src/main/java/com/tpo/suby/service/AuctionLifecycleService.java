@@ -31,6 +31,8 @@ public class AuctionLifecycleService {
     private final AuctionLotStateService auctionLotStateService;
     private final AuctionScheduleService auctionScheduleService;
     private final AuctionPhotoService auctionPhotoService;
+    private final GmailEmailService gmailEmailService;
+    private final UserBidService userBidService;
 
     @Scheduled(fixedDelay = 10000)
     @Transactional
@@ -684,8 +686,66 @@ private WinningBidInfo highestBid(Integer itemId) {
 
         insertDifferenceRecord(clientId, bidId, winningAmount, availableBalance, differenceAmount);
         ensureDifferenceMessage(clientId, differenceAmount, winningAmount, availableBalance, itemTitle, auctionName, currency);
+        sendPenaltyEmail(clientId, itemTitle, auctionName, fineAmount, winningAmount, currency);
+    
     }
 
+    private void sendPenaltyEmail(
+                Integer clientId,
+                String itemTitle,
+                String auctionName,
+                BigDecimal fineAmount,
+                BigDecimal winningAmount,
+                String currency
+        ) {
+            String recipientEmail =userEmail(clientId);
+            if (recipientEmail == null || recipientEmail.isBlank()) {
+                log.warn("Skipping penalty email because user {} has no email", clientId);
+                return;
+            }
+
+            try {
+                gmailEmailService.send(
+                        recipientEmail,
+                        "Aviso de Multa - Fondos Insuficientes en Suby",
+                        """
+                Hola,
+
+                Te informamos que se ha generado una multa en tu cuenta debido a que el saldo de tu medio de pago no cubrió el total de tu puja ganadora.
+
+                Detalle de la subasta:
+                Subasta: %s
+                Articulo: %s
+                Valor de la puja: %s
+                Multa generada (10%%): %s
+
+                Tenes un plazo de 72 horas para regularizar esta situacion desde tu panel de pagos. Recorda que la falta de pago puede derivar en la suspension de tu cuenta.
+
+                Saludos,
+                Equipo Suby
+                """.formatted(
+                                defaultText(auctionName),
+                                defaultText(itemTitle),
+                                formatMoney(winningAmount, currency),
+                                formatMoney(fineAmount, currency)
+                        )
+                );
+            } catch (Exception ex) {
+                log.warn("Failed to send penalty email to {}", recipientEmail, ex);
+            }
+        }
+
+    private String userEmail(Integer userId) {
+        try {
+            return jdbcTemplate.queryForObject("""
+                    SELECT email
+                    FROM usuarios_app
+                    WHERE identificador = ?
+                    """, String.class, userId);
+        } catch (EmptyResultDataAccessException ex) {
+            return null;
+        }
+    }
     private void insertDifferenceRecord(
             Integer clientId,
             Integer bidId,
