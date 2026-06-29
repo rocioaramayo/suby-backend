@@ -29,6 +29,8 @@ public class AuctionDetailResponse {
 
     private String location;
 
+    private String currency;
+
     private AuctioneerResponse auctioneer;
 
     private AuctionCatalogResponse catalog;
