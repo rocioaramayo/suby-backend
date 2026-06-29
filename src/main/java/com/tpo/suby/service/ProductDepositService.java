@@ -16,6 +16,8 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 public class ProductDepositService {
 
+    private static final String DEFAULT_SUBMISSION_HOURS = "8:00 A 23:00 Hs";
+    private static final String DEFAULT_SUBMISSION_DAYS = "Lunes A Jueves";
     private static final String SUBMISSION_SUMMARY_WITH_DEPOSIT =
             "Tu articulo necesita ser evaluado. A continuacion encontraras los datos reales del deposito asignado.";
     private static final String SUBMISSION_SUMMARY_PENDING_DEPOSIT =
@@ -72,6 +74,8 @@ public class ProductDepositService {
     public void applySubmissionDepositData(Map<String, String> data, AssignedDeposit deposit) {
         clearSubmissionDepositData(data);
         data.put("inspection_summary", deposit == null ? SUBMISSION_SUMMARY_PENDING_DEPOSIT : SUBMISSION_SUMMARY_WITH_DEPOSIT);
+        data.put("hours", DEFAULT_SUBMISSION_HOURS);
+        data.put("days", DEFAULT_SUBMISSION_DAYS);
 
         if (deposit == null) {
             return;
