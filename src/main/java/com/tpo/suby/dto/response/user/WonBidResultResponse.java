@@ -10,8 +10,13 @@ import java.math.BigDecimal;
 @Builder
 public class WonBidResultResponse {
 
+    @JsonProperty("user_bid")
+    private BigDecimal userBid;
+
     @JsonProperty("winning_bid")
     private BigDecimal winningBid;
+
+    private Boolean won;
 
     @JsonProperty("suby_commission_pct")
     private BigDecimal subyCommissionPct;

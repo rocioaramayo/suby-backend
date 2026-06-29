@@ -102,18 +102,13 @@ public class UserBidService {
         }
 
         WonBidCore wonBid = wonBidCore(userId, itemId);
-        if (!"si".equalsIgnoreCase(wonBid.winner())) {
-            boolean hasAnyBid = hasAnyBidForItem(userId, itemId);
-            if (hasAnyBid) {
-                throw new WonBidDetailForbiddenException("Este lote no fue adjudicado a tu cuenta.");
-            }
-            throw new WonBidDetailNotFoundException("Lote no encontrado en tu historial.");
-        }
-
         List<WonBidTimelineItemResponse> timeline = bidTimeline(userId, itemId, wonBid.auctionDate(), wonBid.auctionHour());
+        LotOutcome lotOutcome = lotOutcome(itemId);
+        BigDecimal effectiveWinningBid = lotOutcome.winningBid() == null ? wonBid.winningBid() : lotOutcome.winningBid();
+        boolean userWon = "si".equalsIgnoreCase(wonBid.winner());
 
         BigDecimal commissionPct = commissionPercentage(wonBid.commission(), wonBid.basePrice());
-        BigDecimal commissionAmount = wonBid.winningBid()
+        BigDecimal commissionAmount = effectiveWinningBid
                 .multiply(commissionPct)
                 .divide(new BigDecimal("100"), 2, RoundingMode.HALF_UP);
 
@@ -134,10 +129,12 @@ public class UserBidService {
                         .auctioneer(wonBid.auctioneer())
                         .build())
                 .result(WonBidResultResponse.builder()
-                        .winningBid(wonBid.winningBid())
+                        .userBid(wonBid.winningBid())
+                        .winningBid(effectiveWinningBid)
+                        .won(userWon)
                         .subyCommissionPct(commissionPct)
                         .subyCommissionAmount(commissionAmount)
-                        .totalPaid(wonBid.winningBid().add(commissionAmount))
+                        .totalPaid(effectiveWinningBid.add(commissionAmount))
                         .build())
                 .bidTimeline(timeline)
                 .build();
@@ -310,6 +307,27 @@ public class UserBidService {
                   AND pu.item = ?
                 """, Integer.class, userId, itemId);
         return count != null && count > 0;
+    }
+
+    private LotOutcome lotOutcome(Integer itemId) {
+        try {
+            return jdbcTemplate.queryForObject("""
+                    SELECT TOP 1
+                        pu.importe AS winning_bid,
+                        pu.ganador AS winner_flag
+                    FROM pujos pu
+                    WHERE pu.item = ?
+                    ORDER BY
+                        CASE WHEN pu.ganador = 'si' THEN 0 ELSE 1 END,
+                        pu.importe DESC,
+                        pu.identificador DESC
+                    """, (rs, rowNum) -> new LotOutcome(
+                    rs.getBigDecimal("winning_bid"),
+                    rs.getString("winner_flag")
+            ), itemId);
+        } catch (EmptyResultDataAccessException ex) {
+            return new LotOutcome(BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP), "no");
+        }
     }
 
     private List<WonBidTimelineItemResponse> bidTimeline(Integer userId, Integer itemId, LocalDate auctionDate, java.time.LocalTime auctionHour) {
@@ -764,6 +782,12 @@ Equipo Suby
             Integer bidderNumber,
             Integer bidderClientId,
             BigDecimal amount
+    ) {
+    }
+
+    private record LotOutcome(
+            BigDecimal winningBid,
+            String winnerFlag
     ) {
     }
 
