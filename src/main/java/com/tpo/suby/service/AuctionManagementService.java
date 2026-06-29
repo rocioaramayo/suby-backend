@@ -89,7 +89,6 @@ public class AuctionManagementService {
                 FROM productos p
                 JOIN duenios d ON d.identificador = p.duenio
                 JOIN personas owner ON owner.identificador = d.identificador
-                LEFT JOIN personas owner_check ON owner_check.identificador = d.identificador
                 LEFT JOIN productos_detalle pd ON pd.identificador = p.identificador
                 LEFT JOIN itemsCatalogo ic ON ic.producto = p.identificador
                 LEFT JOIN catalogos c ON c.identificador = ic.catalogo
@@ -136,7 +135,7 @@ public class AuctionManagementService {
                       AND pid.valor = CAST(p.identificador AS VARCHAR(20))
                     ORDER BY mp.enviadoEn DESC, mp.identificador DESC
                 ) proposal
-                WHERE owner_check.nroDocumento <> 'SUBY-COMPANY-BUYER'
+                WHERE COALESCE(owner.documento, '') <> 'SUBY-COMPANY-BUYER'
                 ORDER BY p.identificador DESC
                 """, (rs, rowNum) -> {
             String inspectionStatus = rs.getString("inspection_status");
@@ -1204,7 +1203,7 @@ public class AuctionManagementService {
                     WHERE f.producto = p.identificador
                     ORDER BY f.identificador ASC
                 ) thumbnail
-                WHERE owner.nroDocumento = 'SUBY-COMPANY-BUYER'
+                WHERE owner.documento = 'SUBY-COMPANY-BUYER'
                 ORDER BY p.identificador DESC
                 """, (rs, rowNum) -> AdminProductReviewItemResponse.builder()
                 .productId(rs.getInt("product_id"))
