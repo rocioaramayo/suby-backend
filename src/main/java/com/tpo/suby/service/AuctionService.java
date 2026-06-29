@@ -277,7 +277,7 @@ public class AuctionService {
                         COALESCE(pd.artista, '') AS artist,
                         CONVERT(VARCHAR(10), pd.fechaCreacion, 23) AS period,
                         p.descripcionCompleta AS description,
-                        COALESCE(pd.condicion, '') AS conservation_state,
+                        COALESCE(pd.condicion, '') AS condition,
                         COALESCE(pd.historia, '') AS provenance,
                         ic.precioBase AS base_price,
                         COALESCE(offers.current_offer, ic.precioBase) AS current_offer,
@@ -323,7 +323,7 @@ public class AuctionService {
                     .artist(rs.getString("artist"))
                     .period(rs.getString("period"))
                     .description(rs.getString("description"))
-                    .conservationState(rs.getString("conservation_state"))
+                    .condition(rs.getString("condition"))
                     .provenance(rs.getString("provenance"))
                     .basePrice(rs.getBigDecimal("base_price"))
                     .currentOffer(rs.getBigDecimal("current_offer"))

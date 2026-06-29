@@ -30,8 +30,8 @@ public class LotDetailResponse {
 
     private String description;
 
-    @JsonProperty("conservation_state")
-    private String conservationState;
+    @JsonProperty("condition")
+    private String condition;
 
     private String provenance;
 
