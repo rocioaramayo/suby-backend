@@ -524,32 +524,16 @@ private WinningBidInfo highestBid(Integer itemId) {
 
 
     private BigDecimal getWinnerPaymentMethodBalance(Integer paymentMethodId) {
-        try {
-            return jdbcTemplate.queryForObject("""
-                    SELECT
-                        COALESCE(mdp.montoDisponible, 0)
-                        - COALESCE(mdp.montoUsado, 0)
-                        - COALESCE((
-                            SELECT SUM(pj.importe)
-                            FROM pujos pj
-                            JOIN pujos_medios_de_pago pmp2 ON pmp2.id_pujo = pj.identificador
-                            JOIN asistentes a               ON a.identificador = pj.asistente
-                            JOIN itemsCatalogo ic           ON ic.identificador = pj.item
-                            LEFT JOIN registroDeSubasta rds ON rds.producto = ic.producto
-                                                        AND rds.cliente  = a.cliente
-                            LEFT JOIN pagos pg              ON pg.registroSubasta = rds.identificador
-                                                        AND pg.medioPago = mdp.identificador
-                                                        AND pg.estado IN ('pendiente','procesando','confirmado')
-                            WHERE pj.ganador = 'si'
-                            AND pmp2.id_medio_de_pago = mdp.identificador
-                            AND pg.identificador IS NULL
-                        ), 0)
-                    FROM mediosDePago mdp
-                    WHERE mdp.identificador = ?
-                    """, BigDecimal.class, paymentMethodId);
-        } catch (EmptyResultDataAccessException ex) {
-            return null;
-        }
+            try {
+                return jdbcTemplate.queryForObject("""
+                        SELECT
+                            COALESCE(mdp.montoDisponible, 0) - COALESCE(mdp.montoUsado, 0)
+                        FROM mediosDePago mdp
+                        WHERE mdp.identificador = ?
+                        """, BigDecimal.class, paymentMethodId);
+            } catch (EmptyResultDataAccessException ex) {
+                return null;
+            }
     }
 
     private Integer nullableInt(java.sql.ResultSet rs, String column) throws java.sql.SQLException {

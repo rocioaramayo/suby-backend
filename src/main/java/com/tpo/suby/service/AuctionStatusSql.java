@@ -4,8 +4,9 @@ final class AuctionStatusSql {
 
     private static final String ACTIVE_STATE_SET = "('abierta', 'activa', 'en_vivo', 'live', 'open')";
     private static final String ARGENTINA_NOW =
-            "CAST(SYSUTCDATETIME() AT TIME ZONE 'UTC' AT TIME ZONE 'Argentina Standard Time' AS DATETIME2)";
+           "CAST(SYSUTCDATETIME() AT TIME ZONE 'UTC' AT TIME ZONE 'Argentina Standard Time' AS DATETIME2)";
 
+    
     private AuctionStatusSql() {
     }
 
